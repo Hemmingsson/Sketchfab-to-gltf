@@ -32,9 +32,6 @@
   let appliedEdge = 0;
   let settingsApi = null;
   let uiSettings = null;
-  try {
-    /* filled after dynamic import */
-  } catch (_) {}
 
   function setProgress(pct) {
     const root = document.getElementById("sf-dl-root");
@@ -839,17 +836,6 @@
       return true;
     }
 
-    if (msg.action === "setLang") {
-      switchLang(msg.lang)
-        .then(() => sendResponse({ ok: true, lang }))
-        .catch((e) =>
-          sendResponse({
-            ok: false,
-            error: e && e.message ? e.message : String(e),
-          })
-        );
-      return true;
-    }
   });
 
   try {

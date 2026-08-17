@@ -12,12 +12,9 @@ function emit(msg) {
 
 /**
  * Offscreen documents only get chrome.runtime — chrome.downloads is undefined
- * here, so lib/save.js silently fell back to clicking an <a download> in a
- * hidden, gesture-less document, which never saves anything.
- *
- * Build the blob URL here (we have a DOM) and let the service worker, which
- * does have chrome.downloads, perform the save. The URL is same-origin, so
- * only a short string crosses the message boundary.
+ * here. Build the blob URL where we have a DOM and let the service worker,
+ * which does have chrome.downloads, perform the save. The URL is same-origin,
+ * so only a short string crosses the message boundary.
  *
  * @param {Uint8Array} zip
  * @param {string} filename

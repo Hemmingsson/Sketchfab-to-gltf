@@ -225,32 +225,5 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
-  if (msg.action === "getDevMode") {
-    isDevMode()
-      .then((on) => sendResponse({ ok: true, devMode: on }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }));
-    return true;
-  }
-
-  if (msg.action === "setDevMode") {
-    import("./lib/devlog.js")
-      .then(async ({ setDevMode }) => {
-        const on = await setDevMode(!!msg.on);
-        sendResponse({ ok: true, devMode: on });
-      })
-      .catch((e) => sendResponse({ ok: false, error: String(e) }));
-    return true;
-  }
-
-  if (msg.action === "getLastLog") {
-    import("./lib/devlog.js")
-      .then(async ({ readLastRunLog }) => {
-        const last = await readLastRunLog();
-        sendResponse({ ok: true, ...last });
-      })
-      .catch((e) => sendResponse({ ok: false, error: String(e) }));
-    return true;
-  }
-
   return false;
 });

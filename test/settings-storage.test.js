@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // Minimal in-memory chrome.storage.local fake so the async prefs paths
-// (loadPrefs / savePrefs / setLang / setDevMode) can be exercised in Node.
+// (loadPrefs / savePrefs / setLang) can be exercised in Node.
 function installChromeFake() {
   const store = {};
   globalThis.chrome = {
@@ -44,15 +44,6 @@ test("setLang persists into the canonical prefs blob (no divergence)", async () 
   assert.equal((await loadPrefs()).lang, "ru");
   assert.equal(store.sf_prefs.lang, "ru");
   assert.equal(store.sf_lang, "ru");
-});
-
-test("setDevMode persists into the canonical prefs blob", async () => {
-  const store = installChromeFake();
-  const { setDevMode } = await import("../lib/devlog.js");
-  const { loadPrefs } = await import("../lib/settings.js");
-  await setDevMode(true);
-  assert.equal((await loadPrefs()).devMode, true);
-  assert.equal(store.sf_prefs.devMode, true);
 });
 
 test("loadPrefs migrates from legacy mirror keys when no blob exists", async () => {

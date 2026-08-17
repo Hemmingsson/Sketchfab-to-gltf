@@ -391,19 +391,6 @@
   border-color: var(--blue);
 }
 
-#sf-dl-root .sf-devrow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 11.5px;
-  cursor: pointer;
-  user-select: none;
-}
-#sf-dl-root .sf-devrow input {
-  accent-color: var(--blue);
-}
-
 #sf-dl-devpanel {
   border: 1px solid var(--line);
   border-radius: 8px;
