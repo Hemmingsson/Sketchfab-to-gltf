@@ -95,7 +95,7 @@ ModelName-abcd1234.zip              # or ModelName-abcd1234-textures.zip
 
 **GLB only** keeps `ModelName.glb`, `README.txt`, `info.json`, and `download-log.txt` when developer mode is on. ZIP entries are deflated when that shrinks them.
 
-Protected Sketchfab maps are descrambled (PNG/JPEG, including 4K/8K). If a map cannot be decoded, the public CDN file is kept and listed in `MISSING_BLIT.txt` (Full archive only).
+Protected Sketchfab maps are descrambled (PNG/JPEG, including 4K/8K). If a map cannot be decoded, the public CDN file is kept and listed in `MISSING_TEXTURES.txt` (Full archive only).
 
 ---
 

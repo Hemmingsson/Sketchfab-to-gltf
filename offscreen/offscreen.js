@@ -52,14 +52,10 @@ async function saveViaServiceWorker(zip, filename) {
 
 async function runDownload(payload) {
   const url = payload.url;
-  const captures = Array.isArray(payload.capturedTextures)
-    ? payload.capturedTextures
-    : [];
   const result = await downloadModel(
     url,
     (text) => emit({ type: "progress", text: String(text || "") }),
     {
-      capturedTextures: captures,
       ...(payload.downloadTextures === true || payload.downloadTextures === false
         ? { downloadTextures: payload.downloadTextures === true }
         : {}),

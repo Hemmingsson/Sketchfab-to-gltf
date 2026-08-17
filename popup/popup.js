@@ -325,7 +325,8 @@ btnDl.addEventListener("click", async () => {
     }
     const flags = jobFlagsFromPrefs(saved);
     appendLiveLog("settings textures=" + (flags.downloadTextures ? "on" : "off"));
-    // Prefer page pipeline: content script dumps WebGL-captured textures first
+    // Prefer running in the page: the content script keeps the download alive
+    // even after the popup closes (a popup-driven port dies on blur).
     let pageResult = null;
     try {
       pageResult = await Promise.race([
@@ -356,14 +357,12 @@ btnDl.addEventListener("click", async () => {
         `✅ ${pageResult.name || ""}\n${pageResult.zipName || ""}`,
         "ok"
       );
-      appendLiveLog(
-        `done via page (WebGL capture) ${pageResult.zipName || ""}`
-      );
+      appendLiveLog(`done via page ${pageResult.zipName || ""}`);
       return;
     }
     if (pageResult && pageResult.error) {
       appendLiveLog(`page error: ${pageResult.error}`);
-      // fall through to popup-side download without captures
+      // fall through to popup-side download
       setStatus(t(lang, "pageBusy"));
     }
 

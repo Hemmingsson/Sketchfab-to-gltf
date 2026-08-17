@@ -79,9 +79,6 @@ chrome.runtime.onConnect.addListener((port) => {
     running = true;
     startKeepAlive();
     const url = msg.url;
-    const captures = Array.isArray(msg.capturedTextures)
-      ? msg.capturedTextures
-      : [];
     const wantDev =
       msg.devMode === true || msg.devMode === false
         ? !!msg.devMode
@@ -104,7 +101,6 @@ chrome.runtime.onConnect.addListener((port) => {
       devLog("info", "Pipeline start", {
         url,
         devMode: wantDev,
-        captures: captures.length,
       });
       emitProgress("Background: starting…");
       emitProgress("Opening offscreen worker (needed for 2K/4K texture packs)…");
@@ -114,7 +110,6 @@ chrome.runtime.onConnect.addListener((port) => {
         target: "offscreen",
         action: "download",
         url,
-        capturedTextures: captures,
         devMode: wantDev,
       };
       if (msg.downloadTextures === true || msg.downloadTextures === false) {

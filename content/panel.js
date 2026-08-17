@@ -12,14 +12,6 @@
   let busy = false;
   let devMode = false;
   let liveLog = [];
-  let captureCount = 0; // peak decoded count (monotonic)
-  let lastDumpCount = 0;
-  let hookReady = false;
-  /** set-uids reported by the inject hook (decode blit) */
-  let capturedUids = new Set();
-  /** set-uids seen at texImage2D (may not have blit yet) */
-  let uploadedUids = new Set();
-  let captureUiTimer = null;
   const statusCbs = [];
 
   function currentUid() {
@@ -82,256 +74,6 @@
       } catch (_) {}
     }
   }
-
-  function updateCaptureUi(root) {
-    root = root || document.getElementById("sf-dl-root");
-    if (!root) return;
-    const el = root.querySelector("#sf-dl-captures");
-    if (!el) return;
-    if (captureCount > 0) {
-      const extra =
-        lastDumpCount > 0 ? tt("captureLastDump", { n: lastDumpCount }) : "";
-      el.textContent =
-        tt("captureCount", { n: captureCount }) + (extra ? " · " + extra : "");
-      el.dataset.state = "ok";
-    } else if (lastDumpCount === 0 && hookReady && el.dataset.dumped === "1") {
-      el.textContent = tt("captureNone");
-      el.dataset.state = "none";
-    } else {
-      el.textContent = tt("captureWaiting");
-      el.dataset.state = "waiting";
-    }
-  }
-
-  /** Monotonic peak — never drop because an empty frame reported 0 */
-  function noteCaptureCount(n) {
-    if (typeof n !== "number" || !isFinite(n) || n < 0) return;
-    hookReady = true;
-    if (n === 0 && captureCount > 0) return; // ignore empty-frame noise
-    if (n > captureCount) {
-      captureCount = n;
-      scheduleCaptureUi();
-    } else if (n === captureCount) {
-      scheduleCaptureUi();
-    }
-  }
-
-  function scheduleCaptureUi() {
-    if (captureUiTimer) return;
-    captureUiTimer = setTimeout(() => {
-      captureUiTimer = null;
-      updateCaptureUi();
-    }, 250);
-  }
-
-  /**
-   * Collect streamed dump items from page-world hook(s).
-   * Uses ArrayBuffer (not base64) — base64 of all textures froze the browser.
-   * Hard timeout so download always proceeds.
-   */
-  function requestTextureDump(timeoutMs) {
-    // GPU readback of many 2K maps can take several seconds — wait for dump-done
-    const ms = typeof timeoutMs === "number" ? timeoutMs : 15000;
-    return new Promise((resolve) => {
-      const byKey = new Map();
-      let settled = false;
-      let gotDone = false;
-      let doneTimer = null;
-      let lastItemAt = Date.now();
-
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        window.removeEventListener("message", onMsg);
-        if (doneTimer) clearTimeout(doneTimer);
-        const list = [...byKey.values()].filter((c) => {
-          if (!c) return false;
-          if (c.dataBase64 && c.dataBase64.length > 32) return true;
-          if (c.pngBase64 && c.pngBase64.length > 32) return true;
-          if (c.data && (c.data.byteLength || c.data.length) > 32) return true;
-          return false;
-        });
-        resolve(list);
-      };
-
-      const onMsg = (ev) => {
-        const d = ev.data;
-        if (!d || d.source !== "sf-dl-hook") return;
-
-        if (d.type === "sf-tex-dump-item" && d.capture) {
-          lastItemAt = Date.now();
-          const c = d.capture;
-          // Prefer base64 (reliable); keep ArrayBuffer if present
-          if (!c.dataBase64 && !c.pngBase64 && c.data) {
-            if (!(c.data instanceof ArrayBuffer) && c.data.buffer) {
-              try {
-                c.data = c.data.buffer.slice(
-                  c.data.byteOffset || 0,
-                  (c.data.byteOffset || 0) +
-                    (c.data.byteLength || c.data.length || 0)
-                );
-              } catch (_) {}
-            }
-          }
-          // Drop empty payloads early
-          const hasBytes =
-            (c.dataBase64 && c.dataBase64.length > 32) ||
-            (c.pngBase64 && c.pngBase64.length > 32) ||
-            (c.data && (c.data.byteLength || c.data.length) > 32);
-          if (!hasBytes) return;
-
-          const key =
-            (c.uid && "uid:" + c.uid) ||
-            (c.url && "url:" + c.url) ||
-            (c.name && "name:" + c.name) ||
-            "anon:" +
-              (c.width || 0) +
-              "x" +
-              (c.height || 0) +
-              ":" +
-              (c.byteLength || 0) +
-              ":" +
-              (c.from || "");
-          const prev = byKey.get(key);
-          if (
-            !prev ||
-            (!c.scrambledHint && prev.scrambledHint) ||
-            (c.byteLength || 0) > (prev.byteLength || 0)
-          ) {
-            byKey.set(key, c);
-          }
-          return;
-        }
-
-        if (d.type === "sf-tex-dump-result") {
-          for (const c of d.captures || []) {
-            const key =
-              (c.uid && "uid:" + c.uid) ||
-              (c.name && "name:" + c.name) ||
-              "x:" + (c.byteLength || 0);
-            byKey.set(key, c);
-          }
-          gotDone = true;
-          if (doneTimer) clearTimeout(doneTimer);
-          doneTimer = setTimeout(finish, 80);
-          return;
-        }
-
-        if (d.type === "sf-tex-dump-done") {
-          gotDone = true;
-          if (doneTimer) clearTimeout(doneTimer);
-          // allow late last item
-          doneTimer = setTimeout(finish, 200);
-        }
-      };
-
-      window.addEventListener("message", onMsg);
-      const req = { source: "sf-dl-hook", type: "sf-tex-dump" };
-      try {
-        window.postMessage(req, "*");
-      } catch (_) {}
-      try {
-        document.querySelectorAll("iframe").forEach((frame) => {
-          try {
-            if (frame.contentWindow) frame.contentWindow.postMessage(req, "*");
-          } catch (_) {}
-        });
-      } catch (_) {}
-
-      // Hard deadline
-      setTimeout(() => {
-        if (!settled) finish();
-      }, ms);
-
-      // If items keep arriving, extend a bit until idle (still within hard deadline)
-      const idleWatch = setInterval(() => {
-        if (settled) {
-          clearInterval(idleWatch);
-          return;
-        }
-        if (gotDone && Date.now() - lastItemAt > 400) {
-          clearInterval(idleWatch);
-          finish();
-        }
-      }, 200);
-    });
-  }
-
-  function pingTextureHook() {
-    const req = { source: "sf-dl-hook", type: "sf-tex-ping" };
-    try {
-      window.postMessage(req, "*");
-    } catch (_) {}
-    try {
-      document.querySelectorAll("iframe").forEach((frame) => {
-        try {
-          if (frame.contentWindow) frame.contentWindow.postMessage(req, "*");
-        } catch (_) {}
-      });
-    } catch (_) {}
-  }
-
-  // Live capture counter from page-world hook (all frames may post)
-  window.addEventListener("message", (ev) => {
-    const d = ev.data;
-    if (!d || d.source !== "sf-dl-hook") return;
-    if (d.type === "sf-tex-status") {
-      const n =
-        typeof d.decoded === "number"
-          ? d.decoded
-          : typeof d.count === "number"
-            ? d.count
-            : 0;
-      noteCaptureCount(n);
-      if (Array.isArray(d.uids)) {
-        for (const id of d.uids) {
-          if (id) capturedUids.add(String(id).toLowerCase());
-        }
-      }
-      if (Array.isArray(d.uploadedUids)) {
-        for (const id of d.uploadedUids) {
-          if (id) uploadedUids.add(String(id).toLowerCase());
-        }
-      }
-      if (devMode && Array.isArray(d.patches) && d.patches.length) {
-        // one-shot: don't spam
-        if (!window.__sfLoggedPatches) {
-          window.__sfLoggedPatches = true;
-          appendLog("viewer patches: " + d.patches.join(", "));
-        }
-      }
-    } else if (d.type === "sf-tex-event" && d.event === "patched" && d.detail) {
-      hookReady = true;
-      if (devMode) {
-        appendLog(
-          `viewer patched ${d.detail.file || ""} hits=${(
-            d.detail.hits || []
-          ).join(",")}`
-        );
-      }
-    } else if (d.type === "sf-tex-event" && d.event === "upload" && d.detail) {
-      if (d.detail.uid) uploadedUids.add(String(d.detail.uid).toLowerCase());
-      if (devMode && d.detail.uid) {
-        appendLog(
-          `upload ${d.detail.width}x${d.detail.height} uid=${d.detail.uid} ${
-            d.detail.name || ""
-          }`
-        );
-      }
-    } else if (d.type === "sf-tex-event" && d.event === "capture" && d.detail) {
-      const n =
-        typeof d.detail.count === "number" ? d.detail.count : captureCount + 1;
-      noteCaptureCount(n);
-      if (d.detail.uid) capturedUids.add(String(d.detail.uid).toLowerCase());
-      if (devMode && (d.detail.name || d.detail.kind === "blit" || d.detail.kind === "decoded")) {
-        appendLog(
-          `blit ${d.detail.width || "?"}x${d.detail.height || "?"} via ${
-            d.detail.from || "?"
-          } ${d.detail.name || d.detail.uid || ""}`
-        );
-      }
-    }
-  });
 
   function tt(key, vars) {
     if (i18n && i18n.t) return i18n.t(lang, key, vars);
@@ -454,89 +196,6 @@
     }
   }
 
-  /**
-   * Ensure a same-origin embed is loading so Texture Dumper hooks see decode.
-   * Hidden iframe with internal=1 (best-effort; removed after dump).
-   */
-  function ensureCaptureEmbed(uid) {
-    if (!uid) return null;
-    const id = "sf-dl-capture-embed";
-    let frame = document.getElementById(id);
-    if (frame) return frame;
-    frame = document.createElement("iframe");
-    frame.id = id;
-    frame.setAttribute("title", "sf-dl capture");
-    frame.setAttribute(
-      "src",
-      `https://sketchfab.com/models/${uid}/embed?autostart=1&internal=1&tracking=0&ui_infos=0&ui_watermark=0&ui_controls=0&ui_stop=0`
-    );
-    // Keep tiny/offscreen but not display:none (some browsers throttle WebGL)
-    frame.style.cssText =
-      "position:fixed;width:320px;height:240px;left:-10000px;top:0;opacity:0;pointer-events:none;border:0;z-index:-1";
-    document.documentElement.appendChild(frame);
-    appendLog("spawned capture embed iframe");
-    return frame;
-  }
-
-  function removeCaptureEmbed() {
-    const frame = document.getElementById("sf-dl-capture-embed");
-    if (frame) {
-      try {
-        frame.remove();
-      } catch (_) {}
-    }
-  }
-
-  async function fetchTextureCatalog(modelUid) {
-    try {
-      const resp = await fetch(
-        `https://sketchfab.com/i/models/${modelUid}/textures?optimized=1`,
-        { credentials: "omit" }
-      );
-      if (!resp.ok) return [];
-      const data = await resp.json();
-      return (data.results || []).map((t) => ({
-        setUid: String(t.uid || "").toLowerCase(),
-        name: t.name || "",
-      }));
-    } catch (e) {
-      appendLog("catalog fetch failed: " + (e.message || e));
-      return [];
-    }
-  }
-
-  /** Wait until peak decoded count is stable or hits target */
-  function waitForDecoded(minCount, timeoutMs) {
-    const ms = timeoutMs || 25000;
-    const start = Date.now();
-    let last = captureCount;
-    let lastChange = Date.now();
-    return new Promise((resolve) => {
-      const tick = () => {
-        if (captureCount !== last) {
-          last = captureCount;
-          lastChange = Date.now();
-        }
-        const idle = Date.now() - lastChange >= 2000;
-        if (captureCount >= minCount && idle) {
-          resolve(captureCount);
-          return;
-        }
-        if (idle && captureCount > 0 && Date.now() - start >= 8000) {
-          resolve(captureCount);
-          return;
-        }
-        if (Date.now() - start >= ms) {
-          resolve(captureCount);
-          return;
-        }
-        pingTextureHook();
-        setTimeout(tick, 400);
-      };
-      tick();
-    });
-  }
-
   async function ensureI18n() {
     if (i18n) return i18n;
     try {
@@ -566,62 +225,6 @@
     } catch (_) {
       devMode = false;
     }
-  }
-
-  /**
-   * Cap captures so chrome.runtime port messaging cannot freeze the tab.
-   * Prefer named / non-scrambled / higher-ranked sources.
-   */
-  function slimCaptures(list) {
-    const MAX_N = 32;
-    const MAX_BYTES = 20 * 1024 * 1024;
-    const rank = (c) => {
-      let s = 0;
-      if (c && c.scrambledHint) return -1;
-      if (c && !c.scrambledHint) s += 200;
-      if (c && c.uid) s += 40;
-      if (c && c.name) s += 20;
-      const f = String((c && c.from) || "");
-      if (f.indexOf("decoded") >= 0 || f.indexOf("gpu") >= 0) s += 100;
-      s += Math.min(30, ((c && c.byteLength) || 0) / 200000);
-      return s;
-    };
-    const sorted = (list || []).slice().sort((a, b) => rank(b) - rank(a));
-    const out = [];
-    let bytes = 0;
-    for (const c of sorted) {
-      if (!c) continue;
-      // Prefer non-scrambled; allow scrambled only if nothing else
-      if (c.scrambledHint && out.length > 0) continue;
-      if (rank(c) < 0 && !c.scrambledHint) continue;
-      const n =
-        c.byteLength ||
-        (c.dataBase64 && ((c.dataBase64.length * 3) / 4) | 0) ||
-        (c.pngBase64 && ((c.pngBase64.length * 3) / 4) | 0) ||
-        (c.data && (c.data.byteLength || c.data.length)) ||
-        0;
-      if (!n || n < 64) continue;
-      if (out.length >= MAX_N) break;
-      if (bytes + n > MAX_BYTES) continue;
-      // Strip heavy dual fields — keep base64 for reliable SW transfer
-      const slim = {
-        uid: c.uid || null,
-        name: c.name || null,
-        url: c.url || null,
-        width: c.width || 0,
-        height: c.height || 0,
-        from: c.from || null,
-        scrambledHint: !!c.scrambledHint,
-        mime: c.mime || null,
-        byteLength: n,
-        dataBase64: c.dataBase64 || c.pngBase64 || null,
-        pngBase64: c.pngBase64 || c.dataBase64 || null,
-      };
-      if (!slim.dataBase64 && !slim.pngBase64) continue;
-      out.push(slim);
-      bytes += n;
-    }
-    return { list: out, bytes, dropped: (list || []).length - out.length };
   }
 
   async function runDownload(pageUrl, job) {
@@ -807,7 +410,6 @@
         lang
       );
     }
-    updateCaptureUi(root);
     bindSettingsPills(root);
     if (i18n && i18n.updateLangSwitch) {
       i18n.updateLangSwitch(root.querySelector("#sf-dl-lang"), lang);
@@ -859,7 +461,6 @@
             <div id="sf-dl-ready">Ready to download</div>
             <div id="sf-dl-job" class="sf-set-hint"></div>
             <div id="sf-dl-meta" data-dev-only>Public model → glTF (GLB)</div>
-            <div id="sf-dl-captures" data-dev-only data-state="waiting">WebGL: …</div>
             <div id="sf-dl-status" data-dev-only data-i18n-ready="1">Ready.</div>
             <div id="sf-dl-progress" hidden>
               <div class="sf-progress-track"><i id="sf-dl-bar"></i></div>
@@ -1162,10 +763,6 @@
     applyPanelI18n(root);
     // Keep panel closed; show FAB only
     closePanel();
-    // Ask hook for current capture count (model may already be loaded)
-    pingTextureHook();
-    setTimeout(pingTextureHook, 1500);
-    setTimeout(pingTextureHook, 5000);
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

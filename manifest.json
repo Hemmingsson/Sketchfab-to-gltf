@@ -37,25 +37,6 @@
         "https://sketchfab.com/*",
         "https://www.sketchfab.com/*"
       ],
-      "js": ["content/viewer-inject.js"],
-      "run_at": "document_start",
-      "all_frames": true,
-      "world": "MAIN"
-    },
-    {
-      "matches": [
-        "https://sketchfab.com/*",
-        "https://www.sketchfab.com/*"
-      ],
-      "js": ["content/boot-hook.js"],
-      "run_at": "document_start",
-      "all_frames": true
-    },
-    {
-      "matches": [
-        "https://sketchfab.com/*",
-        "https://www.sketchfab.com/*"
-      ],
       "js": ["content/panel.js"],
       "css": ["content/panel.css"],
       "run_at": "document_idle"

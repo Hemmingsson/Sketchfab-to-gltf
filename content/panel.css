@@ -333,26 +333,6 @@
   border-color: rgba(252, 211, 77, 0.35);
 }
 
-#sf-dl-captures {
-  font-size: 11.5px;
-  line-height: 1.35;
-  padding: 6px 9px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--status-bg);
-  color: var(--muted);
-}
-#sf-dl-captures[data-state="ok"] {
-  color: var(--cyan);
-  border-color: color-mix(in srgb, var(--cyan) 35%, var(--line));
-}
-#sf-dl-captures[data-state="none"] {
-  color: var(--warn);
-}
-#sf-dl-captures[data-state="waiting"] {
-  color: var(--muted);
-}
-
 #sf-dl-status {
   min-height: 44px;
   color: var(--text);
