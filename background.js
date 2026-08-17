@@ -12,6 +12,7 @@ import {
   persistLastRunLog,
   setDevModeCache,
 } from "./lib/devlog.js";
+import { pickJobFields } from "./lib/settings.js";
 
 function post(port, msg) {
   try {
@@ -113,20 +114,8 @@ chrome.runtime.onConnect.addListener((port) => {
         action: "download",
         url,
         devMode: wantDev,
+        ...pickJobFields(msg),
       };
-      if (msg.downloadTextures === true || msg.downloadTextures === false) {
-        payload.downloadTextures = msg.downloadTextures === true;
-      }
-      if (msg.packMode === "glb" || msg.packMode === "full") {
-        payload.packMode = msg.packMode;
-      }
-      if (
-        msg.maxTextureEdge === 0 ||
-        msg.maxTextureEdge === 2048 ||
-        msg.maxTextureEdge === 4096
-      ) {
-        payload.maxTextureEdge = msg.maxTextureEdge;
-      }
       let result;
       for (let attempt = 0; attempt < 8; attempt++) {
         result = await new Promise((resolve) => {

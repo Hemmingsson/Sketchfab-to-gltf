@@ -3,6 +3,7 @@
  * Service workers are killed on 4K texture packs (40+ maps × 64 MB RGBA).
  */
 import { downloadModel } from "../lib/pipeline.js";
+import { pickJobFields } from "../lib/settings.js";
 
 function emit(msg) {
   try {
@@ -53,19 +54,9 @@ async function runDownload(payload) {
     url,
     (text) => emit({ type: "progress", text: String(text || "") }),
     {
-      ...(payload.downloadTextures === true || payload.downloadTextures === false
-        ? { downloadTextures: payload.downloadTextures === true }
-        : {}),
+      ...pickJobFields(payload),
       ...(payload.devMode === true || payload.devMode === false
         ? { devMode: payload.devMode === true }
-        : {}),
-      ...(payload.packMode === "glb" || payload.packMode === "full"
-        ? { packMode: payload.packMode }
-        : {}),
-      ...(payload.maxTextureEdge === 0 ||
-      payload.maxTextureEdge === 2048 ||
-      payload.maxTextureEdge === 4096
-        ? { maxTextureEdge: payload.maxTextureEdge }
         : {}),
     }
   );

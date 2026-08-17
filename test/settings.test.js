@@ -1,8 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizePrefs, jobFlagsFromPrefs } from "../lib/settings.js";
+import { normalizePrefs, jobFlagsFromPrefs, pickJobFields } from "../lib/settings.js";
 import { isJobDirty, formatJobStatus } from "../lib/ui-settings.js";
 import { t } from "../lib/i18n.js";
+
+test("pickJobFields keeps only valid job fields and omits the rest", () => {
+  assert.deepEqual(
+    pickJobFields({ downloadTextures: true, packMode: "glb", maxTextureEdge: 2048 }),
+    { downloadTextures: true, packMode: "glb", maxTextureEdge: 2048 }
+  );
+  // Invalid / absent values are dropped so the receiver keeps its default.
+  assert.deepEqual(pickJobFields({ packMode: "zip", maxTextureEdge: 1000 }), {});
+  assert.deepEqual(pickJobFields({ downloadTextures: false, maxTextureEdge: 0 }), {
+    downloadTextures: false,
+    maxTextureEdge: 0,
+  });
+  assert.deepEqual(pickJobFields(null), {});
+  assert.deepEqual(pickJobFields("nope"), {});
+});
 
 test("normalizePrefs never caps textures unless 2048 or 4096", () => {
   assert.equal(normalizePrefs({}).maxTextureEdge, 0);
