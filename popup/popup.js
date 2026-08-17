@@ -1,12 +1,10 @@
 import {
-  getLang,
   setLang,
   t,
   createLangSwitch,
   updateLangSwitch,
 } from "../lib/i18n.js";
 import { downloadModelInBackground } from "../lib/run-download.js";
-import { saveZip } from "../lib/save.js";
 import { readLastRunLog, setDevModeCache } from "../lib/devlog.js";
 import {
   loadPrefs,
@@ -81,9 +79,6 @@ let applied = {
 let pendingTex = false;
 let pendingDev = false;
 let appliedOk = false;
-let paintTheme = () => {};
-let paintPack = () => {};
-let paintRes = () => {};
 let liveLog = [];
 let currentTab = "dl";
 let devMode = false;
@@ -189,13 +184,13 @@ function applyStaticI18n() {
   updateLangSwitch(langHost, lang);
   applyTheme(document.documentElement, applied.theme);
   applyTheme(document.body, applied.theme);
-  paintTheme = bindThemeSwitch(themeSwitch, {
+  bindThemeSwitch(themeSwitch, {
     getTheme: () => applied.theme,
     onPick: (code) => persistInstant({ theme: code }),
     t,
     lang,
   });
-  paintPack = bindPillSwitch(packSwitch, {
+  bindPillSwitch(packSwitch, {
     items: [
       { code: "full", label: t(lang, "packFull") },
       { code: "glb", label: t(lang, "packGlb") },
@@ -203,7 +198,7 @@ function applyStaticI18n() {
     get: () => applied.packMode,
     onPick: (code) => persistInstant({ packMode: code }),
   });
-  paintRes = bindPillSwitch(resSwitch, {
+  bindPillSwitch(resSwitch, {
     items: [
       { code: "0", label: t(lang, "texSizeOrig") },
       { code: "2048", label: t(lang, "texSize2k") },
@@ -393,11 +388,6 @@ btnDl.addEventListener("click", async () => {
         },
       }
     );
-
-    if (!result.savedByBackground && result.zip) {
-      appendLiveLog("client-side save fallback");
-      await saveZip(result.zip, result.zipName);
-    }
 
     if (result.logText) {
       liveLog = result.logText.split("\n");

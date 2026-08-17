@@ -1,6 +1,5 @@
 import { extractUid } from "../lib/sf-api.js";
 import { downloadModelInBackground } from "../lib/run-download.js";
-import { saveZip } from "../lib/save.js";
 import {
   getLang,
   setLang,
@@ -131,9 +130,6 @@ btnStart.addEventListener("click", async () => {
               : 0,
         }
       );
-      if (!result.savedByBackground && result.zip) {
-        await saveZip(result.zip, result.zipName);
-      }
       row.set(
         `✅ ${result.name} — ${result.zipName}${
           result.hasGlb ? " (glb)" : ""

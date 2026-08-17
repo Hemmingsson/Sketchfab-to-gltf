@@ -634,17 +634,11 @@
     try {
       await ensureDevFlag();
       renderDevUi();
-
-      // GPU blit dump of 4K packs OOMs the tab and the service worker.
-      // pk-descramble is the primary path and does not need blit on the port.
-      const capturedTextures = [];
-      appendLog("skipping GPU blit dump — textures descramble from API pk");
       setStatus(tt("starting"));
 
       const { downloadModelInBackground } = await import(
         chrome.runtime.getURL("lib/run-download.js")
       );
-      const { saveZip } = await import(chrome.runtime.getURL("lib/save.js"));
       let wantTextures = appliedTextures;
       let wantDev = !!devMode;
       if (job && (job.downloadTextures === true || job.downloadTextures === false)) {
@@ -682,68 +676,27 @@
       }
       appendLog("settings textures=" + (wantTextures ? "on" : "off"));
 
-      let result;
-      try {
-        result = await downloadModelInBackground(
-          pageUrl || location.href,
-          (m) => {
-            setStatus(m);
-            if (devMode) appendLog(m);
+      const result = await downloadModelInBackground(
+        pageUrl || location.href,
+        (m) => {
+          setStatus(m);
+          if (devMode) appendLog(m);
+        },
+        {
+          devMode: wantDev,
+          downloadTextures: wantTextures,
+          packMode,
+          maxTextureEdge,
+          onLog: (entry) => {
+            if (!entry) return;
+            appendLog(
+              `[${entry.level || "info"}] ${entry.msg}${
+                entry.data ? " " + JSON.stringify(entry.data) : ""
+              }`
+            );
           },
-          {
-            devMode: wantDev,
-            downloadTextures: wantTextures,
-            packMode,
-            maxTextureEdge,
-            capturedTextures,
-            onLog: (entry) => {
-              if (!entry) return;
-              appendLog(
-                `[${entry.level || "info"}] ${entry.msg}${
-                  entry.data ? " " + JSON.stringify(entry.data) : ""
-                }`
-              );
-            },
-          }
-        );
-      } catch (sendErr) {
-        // Huge capture payload can break messaging — retry without captures
-        const msg = sendErr && sendErr.message ? sendErr.message : String(sendErr);
-        if (capturedTextures.length && /disconnect|message|clone|OOM|memory/i.test(msg)) {
-          appendLog("retry without WebGL captures after: " + msg);
-          setStatus(tt("captureFallback"));
-          result = await downloadModelInBackground(
-            pageUrl || location.href,
-            (m) => {
-              setStatus(m);
-              if (devMode) appendLog(m);
-            },
-            {
-              devMode: wantDev,
-              downloadTextures: wantTextures,
-              packMode,
-              maxTextureEdge,
-              capturedTextures: [],
-              onLog: (entry) => {
-                if (!entry) return;
-                appendLog(
-                  `[${entry.level || "info"}] ${entry.msg}${
-                    entry.data ? " " + JSON.stringify(entry.data) : ""
-                  }`
-                );
-              },
-            }
-          );
-        } else {
-          throw sendErr;
         }
-      }
-
-      if (!result.savedByBackground && result.zip) {
-        setStatus(`${tt("saving")} ${result.zipName}…`);
-        appendLog("client-side save fallback");
-        await saveZip(result.zip, result.zipName);
-      }
+      );
 
       if (result.logText) {
         liveLog = result.logText.split("\n");

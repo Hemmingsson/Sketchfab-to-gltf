@@ -63,14 +63,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": [
-        "lib/*.js",
-        "lib/wasm/decrypt.wasm",
-        "content/webgl-hook.js",
-        "content/viewer-inject.js",
-        "bulk/*",
-        "popup/*"
-      ],
+      "resources": ["lib/*.js", "lib/wasm/decrypt.wasm"],
       "matches": [
         "https://sketchfab.com/*",
         "https://www.sketchfab.com/*"
