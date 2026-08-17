@@ -23,6 +23,9 @@ function post(port, msg) {
 
 let panelPort = null;
 let keepTimer = null;
+// One pipeline job at a time across ALL ports: two clients (popup + page panel,
+// or two tabs) share a single offscreen heap and must not run concurrently.
+let jobRunning = false;
 
 function startKeepAlive() {
   stopKeepAlive();
@@ -64,7 +67,6 @@ async function ensureOffscreen() {
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "sf-pipeline") return;
 
-  let running = false;
   panelPort = port;
   port.onDisconnect.addListener(() => {
     if (panelPort === port) panelPort = null;
@@ -72,11 +74,11 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onMessage.addListener(async (msg) => {
     if (!msg || msg.action !== "download") return;
-    if (running) {
+    if (jobRunning) {
       post(port, { type: "error", error: "Already downloading in background" });
       return;
     }
-    running = true;
+    jobRunning = true;
     startKeepAlive();
     const url = msg.url;
     const wantDev =
@@ -169,7 +171,7 @@ chrome.runtime.onConnect.addListener((port) => {
         logText: wantDev ? formatSessionLog() : "",
       });
     } finally {
-      running = false;
+      jobRunning = false;
       stopKeepAlive();
     }
   });
