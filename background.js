@@ -11,6 +11,17 @@
  * finished jobs are appended to storage.local history.
  */
 
+// Flip to false to silence the diagnostic logging. Logs land in the service
+// worker console (chrome://extensions → this extension → "service worker").
+const DEBUG = true;
+function log(...a) {
+  if (DEBUG) {
+    try {
+      console.log("[sf-dl/bg]", ...a);
+    } catch (_) {}
+  }
+}
+
 const UID_RE = /([a-f0-9]{32})/i;
 const HISTORY_KEY = "sf_history";
 const HISTORY_CAP = 50;
@@ -42,16 +53,20 @@ function broadcast(msg) {
 }
 
 function broadcastJob(job) {
+  const tabId = jobTabs.get(job.uid);
+  log("broadcastJob", job.uid, "phase=", job.phase, "pct=", job.pct, "→ tab", tabId);
   // Extension pages (popup).
   broadcast({ type: "jobUpdate", job });
   // The content-script button in the tab that started this job.
-  const tabId = jobTabs.get(job.uid);
   if (typeof tabId === "number") {
     try {
-      chrome.tabs.sendMessage(tabId, { type: "jobUpdate", job }, () =>
-        void chrome.runtime.lastError
-      );
-    } catch (_) {}
+      chrome.tabs.sendMessage(tabId, { type: "jobUpdate", job }, () => {
+        const err = chrome.runtime.lastError;
+        if (err) log("tabs.sendMessage to", tabId, "failed:", err.message);
+      });
+    } catch (e) {
+      log("tabs.sendMessage threw:", e && e.message);
+    }
   }
 }
 
@@ -128,24 +143,24 @@ async function ensureOffscreen() {
 }
 
 /** Enqueue a fresh job for `uid`, unless it is already active. Returns the id. */
-function enqueue(uid, url) {
+function enqueue(uid, url, name) {
   const active = jobs.get(uid);
   // Ignore re-enqueue of an in-flight uid; a finished uid restarts fresh.
   if (active && active.phase !== "done" && active.phase !== "error") {
+    log("enqueue: uid", uid, "already active (", active.phase, ") — ignoring");
     return uid;
   }
+  log("enqueue: new job", uid, "name=", name);
   const job = {
     id: uid,
     uid,
     url,
-    name: "Sketchfab model",
+    name: (name && String(name).trim()) || "Sketchfab model",
     phase: "queued",
     pct: 0,
     log: [],
     filename: "",
     bytes: 0,
-    vertices: 0,
-    triangles: 0,
     error: "",
     startedAt: Date.now(),
     finishedAt: 0,
@@ -175,7 +190,9 @@ async function runNext() {
   running = true;
   startKeepAlive();
   try {
+    log("runNext: ensuring offscreen for", uid);
     await ensureOffscreen();
+    log("runNext: sending 'run' to offscreen for", uid);
     await chrome.runtime.sendMessage({
       target: "offscreen",
       action: "run",
@@ -183,6 +200,7 @@ async function runNext() {
       url: job.url,
     });
   } catch (e) {
+    log("runNext: failed to start", uid, e && e.message);
     failJob(job, e && e.message ? e.message : String(e));
   }
 }
@@ -256,23 +274,22 @@ function findSavingJob() {
 
 function handleOffscreen(msg) {
   const job = jobs.get(msg.id);
-  if (!job) return;
+  if (!job) {
+    log("offscreen msg for UNKNOWN job", msg.id, "kind=", msg.kind, "(dropped)");
+    return;
+  }
 
   if (msg.kind === "progress") {
+    log("offscreen progress", msg.id, "pct=", msg.pct, "phase=", msg.phase, "text=", msg.text);
     if (typeof msg.pct === "number") job.pct = msg.pct;
     if (msg.phase) job.phase = msg.phase;
     if (msg.text) {
       const text = String(msg.text);
       job.log.push(text);
-      // The pipeline announces the model as "Model: <name> (by <author>)".
-      const mm = /^Model:\s*(.+?)\s*\(by\s+(.+?)\)\s*$/i.exec(text);
-      if (mm) job.name = mm[1];
-      // ...and geometry as "Geometry: <v> vertices, <t> triangles".
-      const gm = /Geometry:\s*(\d+)\s*vertices,\s*(\d+)\s*triangles/i.exec(text);
-      if (gm) {
-        job.vertices = Number(gm[1]);
-        job.triangles = Number(gm[2]);
-      }
+      // Authoritative name from the pipeline: "Model: <name> (by <author>)"
+      // (author optional). Confirms/corrects the page-provided name.
+      const mm = /^Model:\s*(.+?)(?:\s*\(by\b[^)]*\))?\s*$/i.exec(text);
+      if (mm && mm[1]) job.name = mm[1].trim();
     }
     mirrorSession();
     broadcastJob(job);
@@ -280,11 +297,13 @@ function handleOffscreen(msg) {
   }
 
   if (msg.kind === "done") {
+    log("offscreen done", msg.id, "filename=", msg.filename, "bytes=", msg.bytes);
     saveJob(job, msg.blobUrl, msg.filename, msg.bytes);
     return;
   }
 
   if (msg.kind === "error") {
+    log("offscreen error", msg.id, msg.error);
     failJob(job, msg.error);
     return;
   }
@@ -325,15 +344,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: false, error: "Could not parse a model id from the URL" });
       return false;
     }
-    if (_sender && _sender.tab && typeof _sender.tab.id === "number") {
-      jobTabs.set(uid, _sender.tab.id);
-    }
-    const id = enqueue(uid, msg.url);
+    const tabId = _sender && _sender.tab ? _sender.tab.id : undefined;
+    log(msg.action, "url=", msg.url, "uid=", uid, "name=", msg.name, "tab=", tabId);
+    if (typeof tabId === "number") jobTabs.set(uid, tabId);
+    const id = enqueue(uid, msg.url, msg.name);
     sendResponse({ ok: true, id });
     return false;
   }
 
   if (msg.action === "getJobs") {
+    log("getJobs → active:", jobs.size);
     readHistory().then((history) => {
       const active = Array.from(jobs.values());
       const seen = new Set(active.map((j) => j.id));

@@ -48,10 +48,23 @@ function mapProgress(text, prev) {
   return { pct: prev.pct, phase: prev.phase };
 }
 
+// Diagnostic logging. Offscreen logs appear in the offscreen document's own
+// console (chrome://extensions → Inspect views → offscreen.html).
+const DEBUG = true;
+function log(...a) {
+  if (DEBUG) {
+    try {
+      console.log("[sf-dl/offscreen]", ...a);
+    } catch (_) {}
+  }
+}
+
 function emit(msg) {
   try {
     chrome.runtime.sendMessage({ source: "sf-offscreen", ...msg });
-  } catch (_) {}
+  } catch (e) {
+    log("emit failed:", e && e.message);
+  }
 }
 
 /** id → object URL, so a later revoke can free the blob. */
@@ -70,11 +83,13 @@ function revoke(id) {
 }
 
 async function runJob(id, url) {
+  log("runJob start", id, url);
   const prev = { pct: 0, phase: "queued" };
   const onProgress = (text) => {
     const mapped = mapProgress(text, prev);
     prev.pct = mapped.pct;
     prev.phase = mapped.phase;
+    log("progress", id, mapped.pct + "%", mapped.phase, "-", String(text || ""));
     emit({ id, kind: "progress", pct: mapped.pct, phase: mapped.phase, text: String(text || "") });
   };
 
@@ -86,8 +101,10 @@ async function runJob(id, url) {
     blobUrls.set(id, blobUrl);
     // Fallback: free the blob even if no revoke message ever arrives.
     setTimeout(() => revoke(id), 120_000);
+    log("runJob done", id, filename, bytes.length, "bytes");
     emit({ id, kind: "done", blobUrl, filename, bytes: bytes.length });
   } catch (err) {
+    log("runJob error", id, err && err.message);
     emit({ id, kind: "error", error: String((err && err.message) || err) });
   } finally {
     inFlight.delete(id);
@@ -98,7 +115,11 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || msg.target !== "offscreen") return;
 
   if (msg.action === "run") {
-    if (inFlight.has(msg.id)) return;
+    log("run received", msg.id);
+    if (inFlight.has(msg.id)) {
+      log("already in flight, ignoring", msg.id);
+      return;
+    }
     inFlight.add(msg.id);
     runJob(msg.id, msg.url);
     return;

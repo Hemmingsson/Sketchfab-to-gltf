@@ -1,6 +1,6 @@
 const listEl = document.getElementById("list");
 
-// id -> { details, name, progress, pctText, lastLog, stats, pre }
+// id -> { details, name, progress, pctText, lastLog, pre }
 const rows = new Map();
 
 function clampPct(job) {
@@ -26,22 +26,6 @@ function lastLogLine(job) {
 
 function fullLog(job) {
   return Array.isArray(job.log) ? job.log.join("\n") : "";
-}
-
-function formatCount(n) {
-  const num = Number(n);
-  if (!Number.isFinite(num)) return "0";
-  if (num >= 1000) return (num / 1000).toFixed(1) + "k";
-  return String(num);
-}
-
-function statsText(job) {
-  const v = Number(job.vertices) || 0;
-  const t = Number(job.triangles) || 0;
-  if (v > 0 || t > 0) {
-    return "Triangles: " + formatCount(t) + " Vertices: " + formatCount(v);
-  }
-  return "";
 }
 
 function autoScroll(pre) {
@@ -87,9 +71,6 @@ function createRow(job) {
   retry.dataset.url = job.url || "";
   retry.addEventListener("click", () => retryJob(retry.dataset.url));
 
-  const stats = document.createElement("div");
-  stats.textContent = statsText(job);
-
   const pre = document.createElement("pre");
   pre.textContent = fullLog(job);
 
@@ -97,12 +78,11 @@ function createRow(job) {
   details.appendChild(link);
   details.appendChild(document.createTextNode(" "));
   details.appendChild(retry);
-  details.appendChild(stats);
   details.appendChild(pre);
 
   autoScroll(pre);
 
-  rows.set(job.id, { details, name, progress, pctText, lastLog, stats, pre });
+  rows.set(job.id, { details, name, progress, pctText, lastLog, pre });
   return details;
 }
 
@@ -112,7 +92,6 @@ function updateRow(entry, job) {
   entry.progress.value = pct;
   entry.pctText.textContent = " " + pctLabel(job, pct);
   entry.lastLog.textContent = lastLogLine(job);
-  entry.stats.textContent = statsText(job);
   entry.pre.textContent = fullLog(job);
   autoScroll(entry.pre);
 }
