@@ -1,6 +1,27 @@
+const appEl = document.getElementById("app");
 const listEl = document.getElementById("list");
 
-// id -> { details, name, progress, pctText, lastLog, pre }
+// Popups reset every open, so remember the resized box in localStorage and
+// restore it. Chrome caps the window near 800x600, hence the CSS max-*.
+const SIZE_KEY = "sf_popup_size";
+try {
+  const saved = JSON.parse(localStorage.getItem(SIZE_KEY) || "null");
+  if (saved && saved.w) appEl.style.width = saved.w + "px";
+  if (saved && saved.h) appEl.style.height = saved.h + "px";
+} catch (_) {}
+try {
+  const ro = new ResizeObserver(() => {
+    try {
+      localStorage.setItem(
+        SIZE_KEY,
+        JSON.stringify({ w: Math.round(appEl.offsetWidth), h: Math.round(appEl.offsetHeight) })
+      );
+    } catch (_) {}
+  });
+  ro.observe(appEl);
+} catch (_) {}
+
+// id -> { details, name, progress, lastLog, pre }
 const rows = new Map();
 
 function clampPct(job) {
@@ -10,10 +31,10 @@ function clampPct(job) {
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-function pctLabel(job, pct) {
+function progressClass(job) {
+  if (job.phase === "done") return "done";
   if (job.phase === "error") return "error";
-  if (job.phase === "done") return "100%";
-  return pct + "%";
+  return "";
 }
 
 function lastLogLine(job) {
@@ -37,37 +58,37 @@ function createRow(job) {
 
   const details = document.createElement("details");
 
-  // Summary: three stacked lines.
+  // Summary: name, a full-width progress bar (no percentage), latest log line.
   const summary = document.createElement("summary");
 
   const name = document.createElement("div");
+  name.className = "name";
   name.textContent = job.name || "Sketchfab model";
 
-  const progressLine = document.createElement("div");
   const progress = document.createElement("progress");
-  progress.value = pct;
   progress.max = 100;
-  const pctText = document.createElement("span");
-  pctText.textContent = " " + pctLabel(job, pct);
-  progressLine.appendChild(progress);
-  progressLine.appendChild(pctText);
+  progress.value = pct;
+  progress.className = progressClass(job);
 
   const lastLog = document.createElement("div");
+  lastLog.className = "log";
   lastLog.textContent = lastLogLine(job);
 
   summary.appendChild(name);
-  summary.appendChild(progressLine);
+  summary.appendChild(progress);
   summary.appendChild(lastLog);
 
-  // Body.
+  // Body: SF-symbol style action glyphs (labels via title).
   const link = document.createElement("a");
   link.href = job.url || "#";
   link.target = "_blank";
   link.rel = "noreferrer";
-  link.textContent = "Open on Sketchfab";
+  link.title = "Open on Sketchfab";
+  link.textContent = "↗"; // ↗
 
   const retry = document.createElement("button");
-  retry.textContent = "Retry";
+  retry.title = "Retry";
+  retry.textContent = "↻"; // ↻
   retry.dataset.url = job.url || "";
   retry.addEventListener("click", () => retryJob(retry.dataset.url));
 
@@ -82,7 +103,7 @@ function createRow(job) {
 
   autoScroll(pre);
 
-  rows.set(job.id, { details, name, progress, pctText, lastLog, pre });
+  rows.set(job.id, { details, name, progress, lastLog, pre });
   return details;
 }
 
@@ -90,7 +111,7 @@ function updateRow(entry, job) {
   const pct = clampPct(job);
   entry.name.textContent = job.name || "Sketchfab model";
   entry.progress.value = pct;
-  entry.pctText.textContent = " " + pctLabel(job, pct);
+  entry.progress.className = progressClass(job);
   entry.lastLog.textContent = lastLogLine(job);
   entry.pre.textContent = fullLog(job);
   autoScroll(entry.pre);
