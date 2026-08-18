@@ -39,6 +39,51 @@ const queue = [];
 let running = false;
 let keepTimer = null;
 
+// --- Smooth progress ---------------------------------------------------------
+// The offscreen reports a coarse pipeline PHASE; we animate the percentage
+// smoothly toward that phase's ceiling on a timer so the bar always glides
+// (no per-texture jumps, no long stalls). One source of truth for both UIs.
+const PHASE_CEIL = {
+  queued: 0,
+  reading: 8,
+  decrypting: 18,
+  textures: 60,
+  packing: 75,
+  converting: 90,
+  zipping: 95,
+  saving: 99,
+  done: 100,
+  error: 100,
+};
+const SMOOTH_MS = 150;
+let smoothTimer = null;
+
+function startSmoother() {
+  if (smoothTimer) return;
+  smoothTimer = setInterval(() => {
+    if (jobs.size === 0) {
+      stopSmoother();
+      return;
+    }
+    for (const job of jobs.values()) {
+      if (job.phase === "done" || job.phase === "error") continue;
+      const ceil = PHASE_CEIL[job.phase] ?? job.pct;
+      if (job.pct < ceil - 0.5) {
+        // Ease toward the ceiling, but always creep at least a little so a
+        // long silent phase (key reads, ORM packing) never looks frozen.
+        job.pct = Math.min(ceil - 0.5, job.pct + Math.max(0.4, (ceil - job.pct) * 0.06));
+        broadcastJob(job);
+      }
+    }
+  }, SMOOTH_MS);
+}
+function stopSmoother() {
+  if (smoothTimer) {
+    clearInterval(smoothTimer);
+    smoothTimer = null;
+  }
+}
+
 /** 32-hex model id from a Sketchfab URL, or null if none is present. */
 function uidFromUrl(url) {
   const m = UID_RE.exec(String(url || ""));
@@ -57,16 +102,14 @@ function broadcastJob(job) {
   log("broadcastJob", job.uid, "phase=", job.phase, "pct=", job.pct, "→ tab", tabId);
   // Extension pages (popup).
   broadcast({ type: "jobUpdate", job });
-  // The content-script button in the tab that started this job.
+  // The content-script button in the tab that started this job. Fire-and-forget
+  // (the content script doesn't reply, so we don't pass a response callback —
+  // that avoids the noisy "message port closed" warnings).
   if (typeof tabId === "number") {
     try {
-      chrome.tabs.sendMessage(tabId, { type: "jobUpdate", job }, () => {
-        const err = chrome.runtime.lastError;
-        if (err) log("tabs.sendMessage to", tabId, "failed:", err.message);
-      });
-    } catch (e) {
-      log("tabs.sendMessage threw:", e && e.message);
-    }
+      const p = chrome.tabs.sendMessage(tabId, { type: "jobUpdate", job });
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch (_) {}
   }
 }
 
@@ -143,19 +186,19 @@ async function ensureOffscreen() {
 }
 
 /** Enqueue a fresh job for `uid`, unless it is already active. Returns the id. */
-function enqueue(uid, url, name) {
+function enqueue(uid, url) {
   const active = jobs.get(uid);
   // Ignore re-enqueue of an in-flight uid; a finished uid restarts fresh.
   if (active && active.phase !== "done" && active.phase !== "error") {
     log("enqueue: uid", uid, "already active (", active.phase, ") — ignoring");
     return uid;
   }
-  log("enqueue: new job", uid, "name=", name);
+  log("enqueue: new job", uid);
   const job = {
     id: uid,
     uid,
     url,
-    name: (name && String(name).trim()) || "Sketchfab model",
+    name: "Sketchfab model", // corrected from the pipeline "Model:" line
     phase: "queued",
     pct: 0,
     log: [],
@@ -280,19 +323,20 @@ function handleOffscreen(msg) {
   }
 
   if (msg.kind === "progress") {
-    log("offscreen progress", msg.id, "pct=", msg.pct, "phase=", msg.phase, "text=", msg.text);
-    if (typeof msg.pct === "number") job.pct = msg.pct;
+    log("offscreen progress", msg.id, "phase=", msg.phase, "text=", msg.text);
+    // The percentage is animated by the smoother toward this phase's ceiling.
     if (msg.phase) job.phase = msg.phase;
     if (msg.text) {
       const text = String(msg.text);
       job.log.push(text);
-      // Authoritative name from the pipeline: "Model: <name> (by <author>)"
-      // (author optional). Confirms/corrects the page-provided name.
+      // Authoritative model name from the pipeline: "Model: <name> (by <author>)"
+      // (author optional).
       const mm = /^Model:\s*(.+?)(?:\s*\(by\b[^)]*\))?\s*$/i.exec(text);
       if (mm && mm[1]) job.name = mm[1].trim();
     }
+    startSmoother();
     mirrorSession();
-    broadcastJob(job);
+    broadcastJob(job); // immediate (phase/name/log); the smoother animates pct
     return;
   }
 
@@ -345,9 +389,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return false;
     }
     const tabId = _sender && _sender.tab ? _sender.tab.id : undefined;
-    log(msg.action, "url=", msg.url, "uid=", uid, "name=", msg.name, "tab=", tabId);
+    log(msg.action, "url=", msg.url, "uid=", uid, "tab=", tabId);
     if (typeof tabId === "number") jobTabs.set(uid, tabId);
-    const id = enqueue(uid, msg.url, msg.name);
+    const id = enqueue(uid, msg.url);
     sendResponse({ ok: true, id });
     return false;
   }

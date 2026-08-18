@@ -36,20 +36,6 @@
     return m ? m[1].toLowerCase() : null;
   }
 
-  /** The model's display name, straight from the page the user is looking at. */
-  function modelName() {
-    try {
-      const og = document.querySelector('meta[property="og:title"]');
-      if (og && og.content) return og.content.trim();
-    } catch (_) {}
-    try {
-      // "Name - Download Free 3D model by X - Sketchfab" → "Name"
-      const cut = String(document.title || "").split(/\s+[-–—]\s+/)[0];
-      if (cut) return cut.trim();
-    } catch (_) {}
-    return "";
-  }
-
   function getButton() {
     return document.getElementById(BTN_ID);
   }
@@ -82,15 +68,10 @@
   function onClick() {
     const uid = currentUid();
     if (!uid) return;
-    const name = modelName();
-    log("click → enqueue", uid, "name=", name);
+    log("click → enqueue", uid);
     render({ phase: "queued", pct: 0 });
     try {
-      chrome.runtime.sendMessage({
-        action: "enqueueDownload",
-        url: location.href,
-        name,
-      });
+      chrome.runtime.sendMessage({ action: "enqueueDownload", url: location.href });
     } catch (e) {
       log("enqueue send failed", e && e.message);
     }
@@ -181,14 +162,25 @@
     log("onMessage listener failed", e && e.message);
   }
 
+  // Sketchfab is a SPA. Re-sync whenever the URL changes — via the Navigation
+  // API and popstate for immediacy, plus a poll as a catch-all backstop.
+  let lastHref = location.href;
+  function onNav(reason) {
+    if (location.href === lastHref) return;
+    lastHref = location.href;
+    log("navigation (" + reason + ") →", location.href);
+    syncToPage();
+  }
+
   syncToPage();
 
-  let lastHref = location.href;
-  setInterval(() => {
-    if (location.href !== lastHref) {
-      lastHref = location.href;
-      log("navigation →", location.href);
-      syncToPage();
+  try {
+    window.addEventListener("popstate", () => onNav("popstate"));
+  } catch (_) {}
+  try {
+    if (window.navigation && window.navigation.addEventListener) {
+      window.navigation.addEventListener("navigatesuccess", () => onNav("navigation"));
     }
-  }, 500);
+  } catch (_) {}
+  setInterval(() => onNav("poll"), 400);
 })();
