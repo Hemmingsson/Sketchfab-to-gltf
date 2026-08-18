@@ -62,6 +62,22 @@ const blobBytes = new Map();
 /** ids with a run in flight, to ignore duplicate "run" messages. */
 const inFlight = new Set();
 
+/**
+ * Base64-encode raw bytes, chunked over 32768-byte subarrays so
+ * String.fromCharCode does not blow the argument-count / call stack on large
+ * (4K texture) packs. Returns a plain string safe to send over runtime
+ * messaging (which serializes as JSON, not structured clone).
+ */
+function bytesToBase64(buffer) {
+  const u8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const CHUNK = 32768;
+  let binary = "";
+  for (let i = 0; i < u8.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 function revoke(id) {
   const url = blobUrls.get(id);
   if (url) {
@@ -117,14 +133,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === "refetchBytes") {
-    // Background's data-URL fallback: hand back the retained bytes so it can
-    // build a data: URL. Copy into a standalone ArrayBuffer for the response.
+    // Background's data-URL fallback: hand back the retained bytes as a base64
+    // STRING. Chrome's runtime messaging serializes as JSON (not structured
+    // clone), so an ArrayBuffer would arrive as {} and yield a 0-byte file. A
+    // plain string always survives the message boundary. We hold the bytes, so
+    // we base64-encode here and let background build `data:<mime>;base64,<str>`.
     const entry = blobBytes.get(msg.id);
     if (entry && entry.bytes) {
-      const u8 = entry.bytes;
-      const buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
-      log("refetchBytes serving", msg.id, u8.byteLength, "bytes");
-      sendResponse({ ok: true, bytes: buf, mime: entry.mime });
+      log("refetchBytes serving", msg.id, entry.bytes.byteLength, "bytes");
+      sendResponse({ ok: true, base64: bytesToBase64(entry.bytes), mime: entry.mime });
     } else {
       log("refetchBytes MISS", msg.id);
       sendResponse({ ok: false });

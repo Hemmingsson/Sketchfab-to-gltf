@@ -117,7 +117,9 @@ function broadcastJob(job) {
 /**
  * Toolbar progress badge. Shows the furthest-along active job's whole-number
  * percent while work is in flight; cleared the moment the queue drains (see
- * clearBadge in runNext/failJob/finishSave).
+ * clearBadge in runNext/failJob/finishSave). Before any job reports progress
+ * (all still queued at pct 0) we show the active-job COUNT rather than a
+ * misleading "0".
  */
 function updateBadge() {
   try {
@@ -129,7 +131,10 @@ function updateBadge() {
     for (const job of jobs.values()) {
       if (job.pct > pct) pct = job.pct;
     }
-    chrome.action.setBadgeText({ text: String(Math.round(pct)) });
+    const rounded = Math.round(pct);
+    chrome.action.setBadgeText({
+      text: rounded > 0 ? String(rounded) : String(jobs.size),
+    });
   } catch (_) {}
 }
 
@@ -313,10 +318,11 @@ function saveJob(job, blobUrl, filename, bytes) {
 /**
  * Data-URL fallback for a save that the blob path could not land. Some
  * environments reject or interrupt blob: downloads from a service worker; a
- * self-contained data: URL sidesteps that. We ask the offscreen page for the
- * raw bytes it still holds, base64-encode them here (chunked, to avoid a
- * String.fromCharCode stack overflow on large packs), and retry the download
- * exactly ONCE. Only if this retry also fails do we fail the job.
+ * self-contained data: URL sidesteps that. We ask the offscreen page (which
+ * holds the bytes) for a base64 STRING — it encodes there, since a raw
+ * ArrayBuffer does not survive JSON-serialized runtime messaging — build the
+ * data: URL from it, and retry the download exactly ONCE. Only if this retry
+ * also fails do we fail the job.
  *
  * Memory cost: a data: URL materialises the whole file as a ~1.37x base64
  * string in the SW heap — acceptable only as a last-resort, single-shot retry.
@@ -342,17 +348,21 @@ function tryDataUrlFallback(job, reason) {
       (resp) => {
         void chrome.runtime.lastError;
         if (handled) return;
-        if (!resp || !resp.ok || !resp.bytes) {
+        // Offscreen base64-encodes the bytes and returns a STRING (a raw
+        // ArrayBuffer would arrive as {} over JSON-serialized messaging and
+        // silently write a 0-byte file). Build the data URL directly from it.
+        if (!resp || !resp.ok || !resp.base64) {
           giveUp(reason);
           return;
         }
-        let dataUrl;
-        try {
-          dataUrl = bytesToDataUrl(resp.bytes, resp.mime);
-        } catch (e) {
-          giveUp((e && e.message) || reason);
+        // Re-entrancy guard (M1): a duplicate "interrupted" event may have
+        // already advanced the queue and started the next job. Only retry if
+        // THIS job is still live and unfinished.
+        if (!jobs.has(job.uid) || job.phase !== "saving") {
+          giveUp(reason);
           return;
         }
+        const dataUrl = `data:${resp.mime || "application/octet-stream"};base64,${resp.base64}`;
         chrome.downloads.download(
           { url: dataUrl, filename: job.filename, saveAs: false },
           (downloadId) => {
@@ -369,17 +379,6 @@ function tryDataUrlFallback(job, reason) {
   } catch (e) {
     giveUp((e && e.message) || reason);
   }
-}
-
-/** Chunked base64 data: URL from raw bytes (ArrayBuffer or Uint8Array). */
-function bytesToDataUrl(buffer, mime) {
-  const u8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  const CHUNK = 32768;
-  let binary = "";
-  for (let i = 0; i < u8.length; i += CHUNK) {
-    binary += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
-  }
-  return `data:${mime || "application/octet-stream"};base64,${btoa(binary)}`;
 }
 
 function revokeOffscreen(id) {
