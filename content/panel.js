@@ -71,7 +71,10 @@
     log("click → enqueue", uid);
     render({ phase: "queued", pct: 0 });
     try {
-      chrome.runtime.sendMessage({ action: "enqueueDownload", url: location.href });
+      const p = chrome.runtime.sendMessage({ action: "enqueueDownload", url: location.href });
+      if (p && typeof p.then === "function") {
+        p.catch((e) => log("enqueue rejected", e && e.message));
+      }
     } catch (e) {
       log("enqueue send failed", e && e.message);
     }
@@ -103,7 +106,7 @@
     btn.addEventListener("click", onClick);
     btn.addEventListener("mouseenter", onHover);
     btn.addEventListener("mouseleave", onUnhover);
-    document.documentElement.appendChild(btn);
+    document.body.appendChild(btn);
     log("button injected");
     return btn;
   }
@@ -177,10 +180,10 @@
   try {
     window.addEventListener("popstate", () => onNav("popstate"));
   } catch (_) {}
-  try {
-    if (window.navigation && window.navigation.addEventListener) {
-      window.navigation.addEventListener("navigatesuccess", () => onNav("navigation"));
-    }
-  } catch (_) {}
-  setInterval(() => onNav("poll"), 400);
+  // Prefer the Navigation API when available; otherwise fall back to polling.
+  if (window.navigation && window.navigation.addEventListener) {
+    window.navigation.addEventListener("navigate", () => onNav("navigation"));
+  } else {
+    setInterval(() => onNav("poll"), 400);
+  }
 })();
