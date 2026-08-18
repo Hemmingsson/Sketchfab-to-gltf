@@ -22,15 +22,6 @@
     "saving",
   ]);
 
-  const DEBUG = true;
-  function log(...a) {
-    if (DEBUG) {
-      try {
-        console.log("[sf-dl/button]", ...a);
-      } catch (_) {}
-    }
-  }
-
   function currentUid() {
     const m = String(location.href).match(UID_RE);
     return m ? m[1].toLowerCase() : null;
@@ -68,16 +59,13 @@
   function onClick() {
     const uid = currentUid();
     if (!uid) return;
-    log("click → enqueue", uid);
     render({ phase: "queued", pct: 0 });
     try {
       const p = chrome.runtime.sendMessage({ action: "enqueueDownload", url: location.href });
       if (p && typeof p.then === "function") {
-        p.catch((e) => log("enqueue rejected", e && e.message));
+        p.catch(() => {});
       }
-    } catch (e) {
-      log("enqueue send failed", e && e.message);
-    }
+    } catch (_) {}
   }
 
   // On a finished (green ✓) button, hovering reveals the ⬇ icon again — a
@@ -107,7 +95,6 @@
     btn.addEventListener("mouseenter", onHover);
     btn.addEventListener("mouseleave", onUnhover);
     document.body.appendChild(btn);
-    log("button injected");
     return btn;
   }
 
@@ -115,7 +102,6 @@
     const btn = getButton();
     if (btn) {
       btn.remove();
-      log("button removed");
     }
   }
 
@@ -128,16 +114,13 @@
     }
     ensureButton();
     render({ phase: "idle" }); // no stale ✓ from a previously-downloaded model
-    log("sync uid=", uid, "→ getJobs");
     let res;
     try {
       res = chrome.runtime.sendMessage({ action: "getJobs" });
-    } catch (e) {
-      log("getJobs send failed", e && e.message);
+    } catch (_) {
       return;
     }
     if (!res || typeof res.then !== "function") {
-      log("getJobs: no promise returned");
       return;
     }
     res
@@ -146,10 +129,9 @@
         const job = (reply && reply.jobs ? reply.jobs : []).find(
           (j) => j && j.uid === uid
         );
-        log("getJobs reply: job for", uid, "?", !!job, job && job.phase);
         render(job || { phase: "idle" });
       })
-      .catch((e) => log("getJobs rejected", e && e.message));
+      .catch(() => {});
   }
 
   // Live updates pushed from the background to this tab.
@@ -157,13 +139,10 @@
     chrome.runtime.onMessage.addListener((msg) => {
       if (!msg || msg.type !== "jobUpdate" || !msg.job) return;
       const uid = currentUid();
-      log("jobUpdate", msg.job.uid, msg.job.phase, msg.job.pct + "%", "(current", uid + ")");
       if (msg.job.uid !== uid) return;
       render(msg.job);
     });
-  } catch (e) {
-    log("onMessage listener failed", e && e.message);
-  }
+  } catch (_) {}
 
   // Sketchfab is a SPA. Re-sync whenever the URL changes — via the Navigation
   // API (or a poll fallback when it's unavailable) plus popstate.
@@ -171,7 +150,6 @@
   function onNav(reason) {
     if (location.href === lastHref) return;
     lastHref = location.href;
-    log("navigation (" + reason + ") →", location.href);
     syncToPage();
   }
 

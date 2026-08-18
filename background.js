@@ -11,17 +11,6 @@
  * finished jobs are appended to storage.local history.
  */
 
-// Flip to false to silence the diagnostic logging. Logs land in the service
-// worker console (chrome://extensions → this extension → "service worker").
-const DEBUG = true;
-function log(...a) {
-  if (DEBUG) {
-    try {
-      console.log("[sf-dl/bg]", ...a);
-    } catch (_) {}
-  }
-}
-
 const UID_RE = /([a-f0-9]{32})/i;
 const HISTORY_KEY = "sf_history";
 const HISTORY_CAP = 50;
@@ -99,7 +88,6 @@ function broadcast(msg) {
 
 function broadcastJob(job) {
   const tabId = jobTabs.get(job.uid);
-  log("broadcastJob", job.uid, "phase=", job.phase, "pct=", job.pct, "→ tab", tabId);
   // Extension pages (popup).
   broadcast({ type: "jobUpdate", job });
   // The content-script button in the tab that started this job. Fire-and-forget
@@ -221,10 +209,8 @@ function enqueue(uid, url) {
   const active = jobs.get(uid);
   // Ignore re-enqueue of an in-flight uid; a finished uid restarts fresh.
   if (active && active.phase !== "done" && active.phase !== "error") {
-    log("enqueue: uid", uid, "already active (", active.phase, ") — ignoring");
     return uid;
   }
-  log("enqueue: new job", uid);
   const job = {
     id: uid,
     uid,
@@ -265,9 +251,7 @@ async function runNext() {
   running = true;
   startKeepAlive();
   try {
-    log("runNext: ensuring offscreen for", uid);
     await ensureOffscreen();
-    log("runNext: sending 'run' to offscreen for", uid);
     await chrome.runtime.sendMessage({
       target: "offscreen",
       action: "run",
@@ -275,7 +259,7 @@ async function runNext() {
       url: job.url,
     });
   } catch (e) {
-    log("runNext: failed to start", uid, e && e.message);
+    console.error("[sf-dl] failed to start job", uid, e && e.message);
     failJob(job, e && e.message ? e.message : String(e));
   }
 }
@@ -334,7 +318,6 @@ function tryDataUrlFallback(job, reason) {
     return;
   }
   job._fallbackTried = true;
-  log("download fallback: requesting raw bytes for", job.uid);
   let handled = false;
   const giveUp = (message) => {
     if (handled) return;
@@ -416,12 +399,11 @@ function findSavingJob() {
 function handleOffscreen(msg) {
   const job = jobs.get(msg.id);
   if (!job) {
-    log("offscreen msg for UNKNOWN job", msg.id, "kind=", msg.kind, "(dropped)");
+    console.warn("[sf-dl] offscreen message for unknown job", msg.id, "kind=", msg.kind, "(dropped)");
     return;
   }
 
   if (msg.kind === "progress") {
-    log("offscreen progress", msg.id, "phase=", msg.phase, "text=", msg.text);
     // The percentage is animated by the smoother toward this phase's ceiling.
     if (msg.phase) job.phase = msg.phase;
     if (msg.text) {
@@ -439,13 +421,12 @@ function handleOffscreen(msg) {
   }
 
   if (msg.kind === "done") {
-    log("offscreen done", msg.id, "filename=", msg.filename, "bytes=", msg.bytes);
     saveJob(job, msg.blobUrl, msg.filename, msg.bytes);
     return;
   }
 
   if (msg.kind === "error") {
-    log("offscreen error", msg.id, msg.error);
+    console.error("[sf-dl] pipeline error", msg.id, msg.error);
     failJob(job, msg.error);
     return;
   }
@@ -489,7 +470,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return false;
     }
     const tabId = _sender && _sender.tab ? _sender.tab.id : undefined;
-    log(msg.action, "url=", msg.url, "uid=", uid, "tab=", tabId);
     if (typeof tabId === "number") jobTabs.set(uid, tabId);
     const id = enqueue(uid, msg.url);
     sendResponse({ ok: true, id });
@@ -497,7 +477,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === "getJobs") {
-    log("getJobs → active:", jobs.size);
     readHistory().then((history) => {
       const active = Array.from(jobs.values());
       const seen = new Set(active.map((j) => j.id));

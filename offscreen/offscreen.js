@@ -32,22 +32,11 @@ function mapPhase(text, prevPhase) {
   return prevPhase;
 }
 
-// Diagnostic logging. Offscreen logs appear in the offscreen document's own
-// console (chrome://extensions → Inspect views → offscreen.html).
-const DEBUG = true;
-function log(...a) {
-  if (DEBUG) {
-    try {
-      console.log("[sf-dl/offscreen]", ...a);
-    } catch (_) {}
-  }
-}
-
 function emit(msg) {
   try {
     chrome.runtime.sendMessage({ source: "sf-offscreen", ...msg });
   } catch (e) {
-    log("emit failed:", e && e.message);
+    console.error("[sf-dl] emit failed:", e && e.message);
   }
 }
 
@@ -90,11 +79,9 @@ function revoke(id) {
 }
 
 async function runJob(id, url) {
-  log("runJob start", id, url);
   let phase = "queued";
   const onProgress = (text) => {
     phase = mapPhase(text, phase);
-    log("progress", id, phase, "-", String(text || ""));
     emit({ id, kind: "progress", phase, text: String(text || "") });
   };
 
@@ -108,10 +95,9 @@ async function runJob(id, url) {
     blobBytes.set(id, { bytes: bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), mime: type });
     // Fallback: free the blob even if no revoke message ever arrives.
     setTimeout(() => revoke(id), 120_000);
-    log("runJob done", id, filename, bytes.length, "bytes");
     emit({ id, kind: "done", blobUrl, filename, bytes: bytes.length });
   } catch (err) {
-    log("runJob error", id, err && err.message);
+    console.error("[sf-dl] pipeline failed", id, err && err.message);
     emit({ id, kind: "error", error: String((err && err.message) || err) });
   } finally {
     inFlight.delete(id);
@@ -122,9 +108,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || msg.target !== "offscreen") return;
 
   if (msg.action === "run") {
-    log("run received", msg.id);
     if (inFlight.has(msg.id)) {
-      log("already in flight, ignoring", msg.id);
       return;
     }
     inFlight.add(msg.id);
@@ -140,10 +124,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // we base64-encode here and let background build `data:<mime>;base64,<str>`.
     const entry = blobBytes.get(msg.id);
     if (entry && entry.bytes) {
-      log("refetchBytes serving", msg.id, entry.bytes.byteLength, "bytes");
       sendResponse({ ok: true, base64: bytesToBase64(entry.bytes), mime: entry.mime });
     } else {
-      log("refetchBytes MISS", msg.id);
+      console.warn("[sf-dl] refetchBytes miss — bytes unavailable for fallback", msg.id);
       sendResponse({ ok: false });
     }
     return true;
