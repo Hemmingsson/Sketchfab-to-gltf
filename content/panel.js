@@ -166,7 +166,7 @@
   }
 
   // Sketchfab is a SPA. Re-sync whenever the URL changes — via the Navigation
-  // API and popstate for immediacy, plus a poll as a catch-all backstop.
+  // API (or a poll fallback when it's unavailable) plus popstate.
   let lastHref = location.href;
   function onNav(reason) {
     if (location.href === lastHref) return;

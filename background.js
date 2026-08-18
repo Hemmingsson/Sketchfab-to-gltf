@@ -116,8 +116,8 @@ function broadcastJob(job) {
 
 /**
  * Toolbar progress badge. Shows the furthest-along active job's whole-number
- * percent while work is in flight; cleared the moment the queue drains (see
- * clearBadge in runNext/failJob/finishSave). Before any job reports progress
+ * percent while work is in flight; cleared the moment the queue drains (via
+ * this function when jobs is empty, and directly in runNext). Before any job reports progress
  * (all still queued at pct 0) we show the active-job COUNT rather than a
  * misleading "0".
  */
