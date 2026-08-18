@@ -53,6 +53,12 @@ function emit(msg) {
 
 /** id → object URL, so a later revoke can free the blob. */
 const blobUrls = new Map();
+/**
+ * id → { bytes: Uint8Array, mime } retained for the background's data-URL
+ * fallback (see "refetchBytes"). Freed alongside the object URL on revoke or
+ * the 120s timeout so a failed save doesn't pin a 4K pack in memory forever.
+ */
+const blobBytes = new Map();
 /** ids with a run in flight, to ignore duplicate "run" messages. */
 const inFlight = new Set();
 
@@ -64,6 +70,7 @@ function revoke(id) {
     } catch (_) {}
     blobUrls.delete(id);
   }
+  blobBytes.delete(id);
 }
 
 async function runJob(id, url) {
@@ -81,6 +88,8 @@ async function runJob(id, url) {
     const blob = new Blob([bytes], { type });
     const blobUrl = URL.createObjectURL(blob);
     blobUrls.set(id, blobUrl);
+    // Retain the raw bytes for the background's data-URL fallback path.
+    blobBytes.set(id, { bytes: bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), mime: type });
     // Fallback: free the blob even if no revoke message ever arrives.
     setTimeout(() => revoke(id), 120_000);
     log("runJob done", id, filename, bytes.length, "bytes");
@@ -93,7 +102,7 @@ async function runJob(id, url) {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || msg.target !== "offscreen") return;
 
   if (msg.action === "run") {
@@ -105,6 +114,22 @@ chrome.runtime.onMessage.addListener((msg) => {
     inFlight.add(msg.id);
     runJob(msg.id, msg.url);
     return;
+  }
+
+  if (msg.action === "refetchBytes") {
+    // Background's data-URL fallback: hand back the retained bytes so it can
+    // build a data: URL. Copy into a standalone ArrayBuffer for the response.
+    const entry = blobBytes.get(msg.id);
+    if (entry && entry.bytes) {
+      const u8 = entry.bytes;
+      const buf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+      log("refetchBytes serving", msg.id, u8.byteLength, "bytes");
+      sendResponse({ ok: true, bytes: buf, mime: entry.mime });
+    } else {
+      log("refetchBytes MISS", msg.id);
+      sendResponse({ ok: false });
+    }
+    return true;
   }
 
   if (msg.action === "revoke") {

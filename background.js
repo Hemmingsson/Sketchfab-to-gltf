@@ -111,6 +111,32 @@ function broadcastJob(job) {
       if (p && typeof p.catch === "function") p.catch(() => {});
     } catch (_) {}
   }
+  updateBadge();
+}
+
+/**
+ * Toolbar progress badge. Shows the furthest-along active job's whole-number
+ * percent while work is in flight; cleared the moment the queue drains (see
+ * clearBadge in runNext/failJob/finishSave).
+ */
+function updateBadge() {
+  try {
+    if (jobs.size === 0) {
+      clearBadge();
+      return;
+    }
+    let pct = 0;
+    for (const job of jobs.values()) {
+      if (job.pct > pct) pct = job.pct;
+    }
+    chrome.action.setBadgeText({ text: String(Math.round(pct)) });
+  } catch (_) {}
+}
+
+function clearBadge() {
+  try {
+    chrome.action.setBadgeText({ text: "" });
+  } catch (_) {}
 }
 
 /** Mirror active jobs to session storage so a cold popup/SW can rehydrate. */
@@ -173,7 +199,7 @@ async function ensureOffscreen() {
   try {
     await chrome.offscreen.createDocument({
       url: "offscreen/offscreen.html",
-      reasons: ["BLOBS", "WORKERS"],
+      reasons: ["BLOBS"],
       justification:
         "Decrypt model binaries and descramble textures off the service worker heap (4K packs OOM the SW).",
     });
@@ -223,6 +249,7 @@ async function runNext() {
   const uid = queue.shift();
   if (!uid) {
     stopKeepAlive();
+    clearBadge();
     return;
   }
   const job = jobs.get(uid);
@@ -275,12 +302,84 @@ function saveJob(job, blobUrl, filename, bytes) {
     (downloadId) => {
       const err = chrome.runtime.lastError;
       if (err || downloadId === undefined || downloadId === null) {
-        revokeOffscreen(job.uid);
-        failJob(job, (err && err.message) || "Download did not start");
+        // Primary blob path failed to start — try the data-URL fallback once.
+        tryDataUrlFallback(job, (err && err.message) || "Download did not start");
       }
       // Otherwise wait for downloads.onChanged (state complete/interrupted).
     }
   );
+}
+
+/**
+ * Data-URL fallback for a save that the blob path could not land. Some
+ * environments reject or interrupt blob: downloads from a service worker; a
+ * self-contained data: URL sidesteps that. We ask the offscreen page for the
+ * raw bytes it still holds, base64-encode them here (chunked, to avoid a
+ * String.fromCharCode stack overflow on large packs), and retry the download
+ * exactly ONCE. Only if this retry also fails do we fail the job.
+ *
+ * Memory cost: a data: URL materialises the whole file as a ~1.37x base64
+ * string in the SW heap — acceptable only as a last-resort, single-shot retry.
+ */
+function tryDataUrlFallback(job, reason) {
+  if (job._fallbackTried) {
+    revokeOffscreen(job.uid);
+    failJob(job, reason || "Download failed");
+    return;
+  }
+  job._fallbackTried = true;
+  log("download fallback: requesting raw bytes for", job.uid);
+  let handled = false;
+  const giveUp = (message) => {
+    if (handled) return;
+    handled = true;
+    revokeOffscreen(job.uid);
+    failJob(job, message || reason || "Download failed");
+  };
+  try {
+    chrome.runtime.sendMessage(
+      { target: "offscreen", action: "refetchBytes", id: job.uid },
+      (resp) => {
+        void chrome.runtime.lastError;
+        if (handled) return;
+        if (!resp || !resp.ok || !resp.bytes) {
+          giveUp(reason);
+          return;
+        }
+        let dataUrl;
+        try {
+          dataUrl = bytesToDataUrl(resp.bytes, resp.mime);
+        } catch (e) {
+          giveUp((e && e.message) || reason);
+          return;
+        }
+        chrome.downloads.download(
+          { url: dataUrl, filename: job.filename, saveAs: false },
+          (downloadId) => {
+            const err = chrome.runtime.lastError;
+            if (err || downloadId === undefined || downloadId === null) {
+              giveUp((err && err.message) || reason);
+            }
+            // Success: wait for downloads.onChanged. _fallbackTried is set, so
+            // a later "interrupted" fails the job instead of looping.
+          }
+        );
+      }
+    );
+  } catch (e) {
+    giveUp((e && e.message) || reason);
+  }
+}
+
+/** Chunked base64 data: URL from raw bytes (ArrayBuffer or Uint8Array). */
+function bytesToDataUrl(buffer, mime) {
+  const u8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const CHUNK = 32768;
+  let binary = "";
+  for (let i = 0; i < u8.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
+  }
+  return `data:${mime || "application/octet-stream"};base64,${btoa(binary)}`;
 }
 
 function revokeOffscreen(id) {
@@ -361,14 +460,16 @@ chrome.downloads.onChanged.addListener((delta) => {
   if (state !== "complete" && state !== "interrupted") return;
   const job = findSavingJob();
   if (!job) return;
-  if (typeof chrome.downloads.search === "function") {
-    chrome.downloads.search({ id: delta.id }, (items) => {
-      const bytes = items && items[0] ? items[0].fileSize || items[0].totalBytes : 0;
-      finishSave(job, state, bytes);
-    });
-  } else {
-    finishSave(job, state, 0);
+  if (state === "interrupted" && !job._fallbackTried) {
+    // The blob download was interrupted — try the data-URL fallback once
+    // before surfacing a hard error.
+    tryDataUrlFallback(job, "Download interrupted");
+    return;
   }
+  chrome.downloads.search({ id: delta.id }, (items) => {
+    const bytes = items && items[0] ? items[0].fileSize || items[0].totalBytes : 0;
+    finishSave(job, state, bytes);
+  });
 });
 
 /* ---- UI ↔ background messages ---- */
