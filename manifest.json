@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Sketchfab Public Downloader",
   "version": "1.0.0",
-  "description": "Sketchfab Public Downloader v1.0 — download public Sketchfab models as glTF (GLB) ZIP. EN/RU UI, settings, texture descramble.",
+  "description": "Download public Sketchfab models as a self-contained glTF (.glb) with embedded textures. One click, saves in the background.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

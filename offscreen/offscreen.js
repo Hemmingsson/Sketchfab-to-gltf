@@ -1,9 +1,52 @@
 /**
- * Hidden extension page: decrypt, descramble, zip.
- * Service workers are killed on 4K texture packs (40+ maps × 64 MB RGBA).
+ * Offscreen document: runs the preserved pipeline (decrypt, descramble, convert)
+ * off the service worker, which is killed on large texture packs. It has a DOM,
+ * so it builds blob URLs the SW (which owns chrome.downloads) can save.
  */
 import { downloadModel } from "../lib/pipeline.js";
-import { pickJobFields } from "../lib/settings.js";
+
+/** Static progress-text → {pct, phase} table. First hit wins, case-insensitive. */
+const PROGRESS_RULES = [
+  { needles: ["reading public viewer", "uid:"], phase: "reading", pct: 8 },
+  { needles: ["extracting decrypt", "reading key", "static key"], phase: "decrypting", pct: 18 },
+  { needles: ["wasm", "downloading file.binz", "decrypting", "file.osgjs", "model_file"], phase: "decrypting", pct: 28 },
+  { needles: ["downloading textures", "textures api", "textures:"], phase: "textures", pct: 34 },
+  { needles: ["descramble"], phase: "textures", pct: 60 },
+  { needles: ["packed", "orm", "ready for glb"], phase: "packing", pct: 78 },
+  { needles: ["converting osgjs"], phase: "converting", pct: 85 },
+  { needles: ["glb ready"], phase: "converting", pct: 92 },
+  { needles: ["building zip"], phase: "zipping", pct: 95 },
+  { needles: ["saving", "save started", "zip ready"], phase: "saving", pct: 97 },
+];
+
+/**
+ * Map a human progress line to {pct, phase}. Handles the "Texture n/m"
+ * interpolation (34→74) specially; falls back to the previous values when
+ * nothing matches (the "keep previous" rule).
+ *
+ * @param {string} text
+ * @param {{pct:number, phase:string}} prev
+ * @returns {{pct:number, phase:string}}
+ */
+function mapProgress(text, prev) {
+  const lower = String(text || "").toLowerCase();
+
+  const tex = lower.match(/texture (\d+)\/(\d+)/);
+  if (tex) {
+    const n = Number(tex[1]);
+    const m = Number(tex[2]);
+    const frac = m > 0 ? n / m : 0;
+    return { phase: "textures", pct: 34 + Math.round(40 * frac) };
+  }
+
+  for (const rule of PROGRESS_RULES) {
+    if (rule.needles.some((needle) => lower.includes(needle))) {
+      return { phase: rule.phase, pct: rule.pct };
+    }
+  }
+
+  return { pct: prev.pct, phase: prev.phase };
+}
 
 function emit(msg) {
   try {
@@ -11,89 +54,58 @@ function emit(msg) {
   } catch (_) {}
 }
 
-/**
- * Offscreen documents only get chrome.runtime — chrome.downloads is undefined
- * here. Build the blob URL where we have a DOM and let the service worker,
- * which does have chrome.downloads, perform the save. The URL is same-origin,
- * so only a short string crosses the message boundary.
- *
- * @param {Uint8Array} zip
- * @param {string} filename
- * @returns {Promise<number>} download id
- */
-async function saveViaServiceWorker(zip, filename) {
-  const blob = new Blob([zip], { type: "application/zip" });
-  const url = URL.createObjectURL(blob);
-  let res;
-  try {
-    res = await chrome.runtime.sendMessage({ action: "saveZip", url, filename });
-  } catch (e) {
+/** id → object URL, so a later revoke can free the blob. */
+const blobUrls = new Map();
+/** ids with a run in flight, to ignore duplicate "run" messages. */
+const inFlight = new Set();
+
+function revoke(id) {
+  const url = blobUrls.get(id);
+  if (url) {
     try {
       URL.revokeObjectURL(url);
     } catch (_) {}
-    throw e;
+    blobUrls.delete(id);
   }
-  if (!res || !res.ok) {
-    try {
-      URL.revokeObjectURL(url);
-    } catch (_) {}
-    throw new Error((res && res.error) || "Service worker could not save the ZIP");
-  }
-  // Keep the blob alive until the Save As dialog is answered and the write starts.
-  setTimeout(() => {
-    try {
-      URL.revokeObjectURL(url);
-    } catch (_) {}
-  }, 120_000);
-  return res.downloadId;
 }
 
-async function runDownload(payload) {
-  const url = payload.url;
-  const result = await downloadModel(
-    url,
-    (text) => emit({ type: "progress", text: String(text || "") }),
-    {
-      ...pickJobFields(payload),
-      ...(payload.devMode === true || payload.devMode === false
-        ? { devMode: payload.devMode === true }
-        : {}),
-    }
-  );
-  const zip =
-    result.zip instanceof Uint8Array
-      ? result.zip
-      : new Uint8Array(result.zip || []);
-  if (!zip.length) throw new Error("Pipeline returned empty ZIP");
-  emit({
-    type: "progress",
-    text: `Saving ${result.zipName} (${zip.length} bytes)…`,
-  });
-  const downloadId = await saveViaServiceWorker(zip, result.zipName);
-  return {
-    zipName: result.zipName,
-    name: result.name,
-    author: result.author,
-    hasGlb: !!result.hasGlb,
-    fileCount: result.fileCount || 0,
-    zipBytes: zip.length,
-    downloadId,
-    saved: true,
+async function runJob(id, url) {
+  const prev = { pct: 0, phase: "queued" };
+  const onProgress = (text) => {
+    const mapped = mapProgress(text, prev);
+    prev.pct = mapped.pct;
+    prev.phase = mapped.phase;
+    emit({ id, kind: "progress", pct: mapped.pct, phase: mapped.phase, text: String(text || "") });
   };
+
+  try {
+    const { filename, bytes, kind } = await downloadModel(url, onProgress);
+    const type = kind === "glb" ? "model/gltf-binary" : "application/zip";
+    const blob = new Blob([bytes], { type });
+    const blobUrl = URL.createObjectURL(blob);
+    blobUrls.set(id, blobUrl);
+    // Fallback: free the blob even if no revoke message ever arrives.
+    setTimeout(() => revoke(id), 120_000);
+    emit({ id, kind: "done", blobUrl, filename, bytes: bytes.length });
+  } catch (err) {
+    emit({ id, kind: "error", error: String((err && err.message) || err) });
+  } finally {
+    inFlight.delete(id);
+  }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (!msg || msg.target !== "offscreen" || msg.action !== "download") {
-    return false;
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!msg || msg.target !== "offscreen") return;
+
+  if (msg.action === "run") {
+    if (inFlight.has(msg.id)) return;
+    inFlight.add(msg.id);
+    runJob(msg.id, msg.url);
+    return;
   }
-  runDownload(msg)
-    .then((done) => sendResponse({ ok: true, ...done }))
-    .catch((e) =>
-      sendResponse({
-        ok: false,
-        error: e && e.message ? e.message : String(e),
-        stack: e && e.stack ? e.stack : "",
-      })
-    );
-  return true;
+
+  if (msg.action === "revoke") {
+    revoke(msg.id);
+    return;
+  }
 });
