@@ -182,7 +182,10 @@
   } catch (_) {}
   // Prefer the Navigation API when available; otherwise fall back to polling.
   if (window.navigation && window.navigation.addEventListener) {
-    window.navigation.addEventListener("navigate", () => onNav("navigation"));
+    // Use "navigatesuccess" (fires AFTER the navigation commits, with
+    // location.href already updated) rather than "navigate" (fires before the
+    // commit, when location.href is still the old URL and onNav's guard skips).
+    window.navigation.addEventListener("navigatesuccess", () => onNav("navigation"));
   } else {
     setInterval(() => onNav("poll"), 400);
   }
