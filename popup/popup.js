@@ -1,6 +1,6 @@
 const listEl = document.getElementById("list");
 
-// id -> { details, progress, pctText, pre, summaryName }
+// id -> { details, name, progress, pctText, lastLog, stats, pre }
 const rows = new Map();
 
 function clampPct(job) {
@@ -11,9 +11,41 @@ function clampPct(job) {
 }
 
 function pctLabel(job, pct) {
-  if (job.phase === "error") return job.error ? String(job.error) : "error";
+  if (job.phase === "error") return "error";
   if (job.phase === "done") return "100%";
   return pct + "%";
+}
+
+function lastLogLine(job) {
+  if (Array.isArray(job.log) && job.log.length > 0) {
+    const line = job.log[job.log.length - 1];
+    return line == null ? "" : String(line);
+  }
+  return "";
+}
+
+function fullLog(job) {
+  return Array.isArray(job.log) ? job.log.join("\n") : "";
+}
+
+function formatCount(n) {
+  const num = Number(n);
+  if (!Number.isFinite(num)) return "0";
+  if (num >= 1000) return (num / 1000).toFixed(1) + "k";
+  return String(num);
+}
+
+function statsText(job) {
+  const v = Number(job.vertices) || 0;
+  const t = Number(job.triangles) || 0;
+  if (v > 0 || t > 0) {
+    return "Triangles: " + formatCount(t) + " Vertices: " + formatCount(v);
+  }
+  return "";
+}
+
+function autoScroll(pre) {
+  pre.scrollTop = pre.scrollHeight;
 }
 
 function createRow(job) {
@@ -21,19 +53,29 @@ function createRow(job) {
 
   const details = document.createElement("details");
 
+  // Summary: three stacked lines.
   const summary = document.createElement("summary");
-  const summaryName = document.createElement("span");
-  summaryName.textContent = job.name || "Sketchfab model";
+
+  const name = document.createElement("div");
+  name.textContent = job.name || "Sketchfab model";
+
+  const progressLine = document.createElement("div");
   const progress = document.createElement("progress");
   progress.value = pct;
   progress.max = 100;
   const pctText = document.createElement("span");
   pctText.textContent = " " + pctLabel(job, pct);
-  summary.appendChild(summaryName);
-  summary.appendChild(document.createTextNode(" "));
-  summary.appendChild(progress);
-  summary.appendChild(pctText);
+  progressLine.appendChild(progress);
+  progressLine.appendChild(pctText);
 
+  const lastLog = document.createElement("div");
+  lastLog.textContent = lastLogLine(job);
+
+  summary.appendChild(name);
+  summary.appendChild(progressLine);
+  summary.appendChild(lastLog);
+
+  // Body.
   const link = document.createElement("a");
   link.href = job.url || "#";
   link.target = "_blank";
@@ -45,25 +87,34 @@ function createRow(job) {
   retry.dataset.url = job.url || "";
   retry.addEventListener("click", () => retryJob(retry.dataset.url));
 
+  const stats = document.createElement("div");
+  stats.textContent = statsText(job);
+
   const pre = document.createElement("pre");
-  pre.textContent = Array.isArray(job.log) ? job.log.join("\n") : "";
+  pre.textContent = fullLog(job);
 
   details.appendChild(summary);
   details.appendChild(link);
   details.appendChild(document.createTextNode(" "));
   details.appendChild(retry);
+  details.appendChild(stats);
   details.appendChild(pre);
 
-  rows.set(job.id, { details, progress, pctText, pre, summaryName });
+  autoScroll(pre);
+
+  rows.set(job.id, { details, name, progress, pctText, lastLog, stats, pre });
   return details;
 }
 
 function updateRow(entry, job) {
   const pct = clampPct(job);
-  entry.summaryName.textContent = job.name || "Sketchfab model";
+  entry.name.textContent = job.name || "Sketchfab model";
   entry.progress.value = pct;
   entry.pctText.textContent = " " + pctLabel(job, pct);
-  entry.pre.textContent = Array.isArray(job.log) ? job.log.join("\n") : "";
+  entry.lastLog.textContent = lastLogLine(job);
+  entry.stats.textContent = statsText(job);
+  entry.pre.textContent = fullLog(job);
+  autoScroll(entry.pre);
 }
 
 function upsertJob(job, { prepend } = {}) {

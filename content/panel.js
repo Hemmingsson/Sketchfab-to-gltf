@@ -1,7 +1,8 @@
 /**
  * Content script (isolated world): a single injected download button.
  * - Detects Sketchfab model pages and injects one corner button.
- * - Click enqueues a background download; the button reflects job state.
+ * - Click enqueues a background download; the button reflects live job state
+ *   (pushed from the background via chrome.tabs.sendMessage to this tab).
  * - Follows SPA URL changes and restores state from the background registry.
  */
 (function () {
@@ -37,17 +38,20 @@
   }
 
   function setIdle(btn) {
+    btn.dataset.phase = "idle";
     btn.className = "";
-    btn.textContent = "⬇"; // ⬇
+    btn.textContent = "⬇";
     btn.removeAttribute("title");
   }
 
   function applyJob(btn, job) {
     if (!btn || !job) return;
     const phase = job.phase;
+    btn.dataset.phase = phase;
     if (phase === "done") {
+      // Hover reveals the download icon again (a click re-downloads).
       btn.className = "done";
-      btn.textContent = "✓"; // ✓
+      btn.textContent = "✓";
       btn.removeAttribute("title");
     } else if (phase === "error") {
       btn.className = "error";
@@ -55,58 +59,19 @@
       btn.title = job.error || "Download failed";
     } else if (PROGRESS_PHASES.indexOf(phase) !== -1) {
       btn.className = "progress";
-      const pct = Math.max(0, Math.min(100, job.pct | 0));
-      btn.textContent = pct + "%";
+      btn.textContent = Math.max(0, Math.min(100, job.pct | 0)) + "%";
       btn.removeAttribute("title");
     }
-  }
-
-  // The background pushes jobUpdate via chrome.runtime.sendMessage, which
-  // reaches extension pages (the popup) but NOT content scripts. So the button
-  // polls getJobs while its job is in flight. (The onMessage listener below is
-  // kept as a harmless fast-path in case updates are ever also tab-messaged.)
-  let pollTimer = null;
-  function stopPolling() {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-    }
-  }
-  function pollOnce() {
-    const uid = currentUid();
-    const btn = getButton();
-    if (!uid || !btn) {
-      stopPolling();
-      return;
-    }
-    const res = sendMessage({ action: "getJobs" });
-    if (!res || typeof res.then !== "function") return;
-    res
-      .then((reply) => {
-        const b = getButton();
-        if (!b || currentUid() !== uid) return;
-        const job = (reply && reply.jobs ? reply.jobs : []).find(
-          (j) => j && j.uid === uid
-        );
-        if (!job) return;
-        applyJob(b, job);
-        if (job.phase === "done" || job.phase === "error") stopPolling();
-      })
-      .catch(() => {});
-  }
-  function startPolling() {
-    if (pollTimer) return;
-    pollTimer = setInterval(pollOnce, 600);
   }
 
   function onClick() {
     const btn = getButton();
     if (!btn) return;
+    btn.dataset.phase = "progress";
     btn.className = "progress";
     btn.textContent = "0%";
     btn.removeAttribute("title");
     sendMessage({ action: "enqueueDownload", url: location.href });
-    startPolling();
   }
 
   function injectButton() {
@@ -116,12 +81,24 @@
     btn.type = "button";
     setIdle(btn);
     btn.addEventListener("click", onClick);
+    // On a finished button, hovering shows the download icon (re-download).
+    btn.addEventListener("mouseenter", () => {
+      if (btn.dataset.phase === "done") {
+        btn.className = "";
+        btn.textContent = "⬇";
+      }
+    });
+    btn.addEventListener("mouseleave", () => {
+      if (btn.dataset.phase === "done") {
+        btn.className = "done";
+        btn.textContent = "✓";
+      }
+    });
     document.documentElement.appendChild(btn);
     restoreState();
   }
 
   function removeButton() {
-    stopPolling();
     const btn = getButton();
     if (btn) btn.remove();
   }
@@ -129,25 +106,17 @@
   function restoreState() {
     const uid = currentUid();
     if (!uid) return;
-    let res;
-    try {
-      res = chrome.runtime.sendMessage({ action: "getJobs" });
-    } catch (_) {
-      return;
-    }
+    const res = sendMessage({ action: "getJobs" });
     if (!res || typeof res.then !== "function") return;
     res
       .then((reply) => {
         const btn = getButton();
         if (!btn || currentUid() !== uid) return;
-        const jobs = reply && reply.jobs ? reply.jobs : [];
-        const job = jobs.find((j) => j && j.uid === uid);
-        if (job) {
-          applyJob(btn, job);
-          if (job.phase !== "done" && job.phase !== "error") startPolling();
-        } else {
-          setIdle(btn);
-        }
+        const job = (reply && reply.jobs ? reply.jobs : []).find(
+          (j) => j && j.uid === uid
+        );
+        if (job) applyJob(btn, job);
+        else setIdle(btn);
       })
       .catch(() => {});
   }
@@ -157,6 +126,7 @@
     else removeButton();
   }
 
+  // Live updates pushed from the background to this tab.
   try {
     chrome.runtime.onMessage.addListener((msg) => {
       if (!msg || msg.type !== "jobUpdate" || !msg.job) return;

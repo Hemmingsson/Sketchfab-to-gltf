@@ -19,6 +19,10 @@ const KEEPALIVE_MS = 20000;
 
 /** uid → JobRecord. The single source of truth for in-flight work. */
 const jobs = new Map();
+/** uid → tabId that started the job, so we can push updates to its content
+ * script. runtime.sendMessage broadcasts reach the popup but NOT content
+ * scripts, so the injected button needs a tab-targeted message. */
+const jobTabs = new Map();
 /** uids waiting to run, FIFO. The head runs when nothing is in flight. */
 const queue = [];
 let running = false;
@@ -38,7 +42,17 @@ function broadcast(msg) {
 }
 
 function broadcastJob(job) {
+  // Extension pages (popup).
   broadcast({ type: "jobUpdate", job });
+  // The content-script button in the tab that started this job.
+  const tabId = jobTabs.get(job.uid);
+  if (typeof tabId === "number") {
+    try {
+      chrome.tabs.sendMessage(tabId, { type: "jobUpdate", job }, () =>
+        void chrome.runtime.lastError
+      );
+    } catch (_) {}
+  }
 }
 
 /** Mirror active jobs to session storage so a cold popup/SW can rehydrate. */
@@ -130,6 +144,8 @@ function enqueue(uid, url) {
     log: [],
     filename: "",
     bytes: 0,
+    vertices: 0,
+    triangles: 0,
     error: "",
     startedAt: Date.now(),
     finishedAt: 0,
@@ -179,6 +195,7 @@ function failJob(job, message) {
   jobs.delete(job.uid);
   mirrorSession();
   broadcastJob(job);
+  jobTabs.delete(job.uid);
   appendHistory(job);
   running = false;
   runNext();
@@ -220,6 +237,7 @@ async function finishSave(job, state, bytes) {
   jobs.delete(job.uid);
   mirrorSession();
   broadcastJob(job);
+  jobTabs.delete(job.uid);
   await appendHistory(job);
   revokeOffscreen(job.uid);
   running = false;
@@ -244,10 +262,17 @@ function handleOffscreen(msg) {
     if (typeof msg.pct === "number") job.pct = msg.pct;
     if (msg.phase) job.phase = msg.phase;
     if (msg.text) {
-      job.log.push(String(msg.text));
+      const text = String(msg.text);
+      job.log.push(text);
       // The pipeline announces the model as "Model: <name> (by <author>)".
-      const mm = /^Model:\s*(.+?)\s*\(by\s+(.+?)\)\s*$/i.exec(String(msg.text));
+      const mm = /^Model:\s*(.+?)\s*\(by\s+(.+?)\)\s*$/i.exec(text);
       if (mm) job.name = mm[1];
+      // ...and geometry as "Geometry: <v> vertices, <t> triangles".
+      const gm = /Geometry:\s*(\d+)\s*vertices,\s*(\d+)\s*triangles/i.exec(text);
+      if (gm) {
+        job.vertices = Number(gm[1]);
+        job.triangles = Number(gm[2]);
+      }
     }
     mirrorSession();
     broadcastJob(job);
@@ -299,6 +324,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!uid) {
       sendResponse({ ok: false, error: "Could not parse a model id from the URL" });
       return false;
+    }
+    if (_sender && _sender.tab && typeof _sender.tab.id === "number") {
+      jobTabs.set(uid, _sender.tab.id);
     }
     const id = enqueue(uid, msg.url);
     sendResponse({ ok: true, id });
