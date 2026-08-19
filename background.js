@@ -281,7 +281,7 @@ function failJob(job, message) {
 /** Kick off the browser download once the offscreen page hands us a blob URL. */
 function saveJob(job, blobUrl, filename, bytes) {
   job.phase = "saving";
-  job.filename = filename || job.filename || "sketchfab-model.glb";
+  job.filename = filename || job.filename || "3d_model.glb";
   if (typeof bytes === "number") job.bytes = bytes;
   mirrorSession();
   broadcastJob(job);
