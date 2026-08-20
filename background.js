@@ -371,9 +371,15 @@ function revokeOffscreen(id) {
 /** Finish a job in the "saving" phase from a downloads.onChanged event. */
 async function finishSave(job, state, bytes) {
   const ok = state === "complete";
-  job.phase = ok ? "done" : "error";
-  job.pct = ok ? 100 : job.pct;
-  if (!ok) job.error = job.error || "Download interrupted";
+  // A pipeline-level error (e.g. animation lost) may already be attached while
+  // the diagnostic zip is still saving. Keep the red phase after the file lands.
+  if (job.error) {
+    job.phase = "error";
+  } else {
+    job.phase = ok ? "done" : "error";
+    if (!ok) job.error = job.error || "Download interrupted";
+  }
+  job.pct = ok || job.error ? 100 : job.pct;
   if (typeof bytes === "number" && bytes > 0) job.bytes = bytes;
   job.finishedAt = Date.now();
   jobs.delete(job.uid);
@@ -427,6 +433,15 @@ function handleOffscreen(msg) {
 
   if (msg.kind === "error") {
     console.error("[sf-dl] pipeline error", msg.id, msg.error);
+    // done-then-error: the file is already being saved. Attach the message and
+    // keep the job in the map so finishSave / findSavingJob still work.
+    if (job.phase === "saving" || job.phase === "done") {
+      job.error = String(msg.error || "Download failed");
+      if (job.phase === "done") job.phase = "error";
+      mirrorSession();
+      broadcastJob(job);
+      return;
+    }
     failJob(job, msg.error);
     return;
   }

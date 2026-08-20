@@ -9,7 +9,10 @@ import {
   accumulateDeltaTimes,
   collapseNonIncreasing,
   timesLookLikeDeltas,
+  animationBinUrl,
+  animationBinUrlCandidates,
   collectAnimationBinGzNames,
+  combineScaleTracks,
   convertOsgjsToGlbFromFiles,
   decodePackedQuat,
   decodePackedVec3,
@@ -21,7 +24,7 @@ import {
   remapRotationYup,
   remapTranslationYup,
 } from "../lib/osgjs2gltf.js";
-import { extraAnimationUrls } from "../lib/pipeline.js";
+import { animationLossError, extraAnimationBins, extraAnimationUrls } from "../lib/pipeline.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const samples = join(root, ".context/samples");
@@ -217,6 +220,114 @@ test("pipeline extraAnimationUrls uses /animations/ next to /files/, not the fil
   assert.deepEqual(extraAnimationUrls(osgjsUrl, '{"osg.Node":{}}'), []);
 });
 
+test("animationBinUrlCandidates prefers /animations/ and keeps the sibling as fallback", () => {
+  const osgjsUrl =
+    "https://media.sketchfab.com/models/8fb150270adb45aa9653e857f3fa351b/c1b40aefcd7746e99b75854015a7ebf0/files/aa62cdcea91e45adbfff540e0272c409/file.binz";
+  const name = "54aede888904419090f97e89305e93e.bin.gz";
+  const candidates = animationBinUrlCandidates(osgjsUrl, name);
+  assert.equal(
+    candidates[0],
+    "https://media.sketchfab.com/models/8fb150270adb45aa9653e857f3fa351b/c1b40aefcd7746e99b75854015a7ebf0/animations/54aede888904419090f97e89305e93e.bin.gz"
+  );
+  assert.ok(
+    candidates.includes(
+      "https://media.sketchfab.com/models/8fb150270adb45aa9653e857f3fa351b/c1b40aefcd7746e99b75854015a7ebf0/files/aa62cdcea91e45adbfff540e0272c409/54aede888904419090f97e89305e93e.bin.gz"
+    )
+  );
+  assert.equal(animationBinUrl(osgjsUrl, name), candidates[0]);
+});
+
+test("extraAnimationBins matches official URLs by hash, not list position", () => {
+  const osgjsUrl =
+    "https://media.sketchfab.com/models/uid/ver/files/filehash/file.binz";
+  const osgjs = JSON.stringify({
+    "osgAnimation.BasicAnimationManager": {
+      Animations: [
+        {
+          "osgAnimation.Animation": {
+            Name: "motion4",
+            Channels: [
+              {
+                "osgAnimation.Vec3LerpChannel": {
+                  Name: "translate",
+                  TargetName: "Root",
+                  KeyFrames: {
+                    Time: { Array: { Float32Array: { File: "54aede888904419090f97e89305e93e.bin.gz" } } },
+                    Key: { Array: { Float32Array: { File: "54aede888904419090f97e89305e93e.bin.gz" } } },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  const official = [
+    "https://cdn.example/other/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bin.gz",
+    "https://cdn.example/official/54aede888904419090f97e89305e93e.bin.gz",
+  ];
+  const bins = extraAnimationBins(osgjsUrl, osgjs, official);
+  assert.equal(bins.length, 1);
+  assert.equal(bins[0].name, "54aede888904419090f97e89305e93e.bin.gz");
+  assert.equal(bins[0].candidates[0], official[1]);
+  assert.ok(bins[0].candidates.some((u) => u.includes("/animations/")));
+  assert.ok(bins[0].candidates.some((u) => u.includes("/files/filehash/")));
+});
+
+test("animationLossError fires only on total clip-bin loss", () => {
+  const names = ["aa.bin.gz"];
+  assert.equal(
+    animationLossError({
+      animBinNames: names,
+      emittedAnimations: 0,
+      animBinsFailed: 1,
+      clipHint: "motion4",
+    }),
+    'Animation lost: osgjs has clip "motion4" but 1/1 animation bin(s) failed to fetch. Delivered a debug bundle instead of a static GLB — see debug/info.json → animFetch.'
+  );
+  assert.equal(
+    animationLossError({ animBinNames: names, emittedAnimations: 1, animBinsFailed: 1 }),
+    null
+  );
+  assert.equal(
+    animationLossError({ animBinNames: names, emittedAnimations: 0, animBinsFailed: 0 }),
+    null
+  );
+  assert.equal(
+    animationLossError({ animBinNames: [], emittedAnimations: 0, animBinsFailed: 1 }),
+    null
+  );
+});
+
+function vec3Channel(name, target, file, keyOffset, timeOffset, keySize = 2) {
+  return {
+    "osgAnimation.Vec3LerpChannel": {
+      Name: name,
+      TargetName: target,
+      KeyFrames: {
+        Key: {
+          Array: { Float32Array: { File: file, Size: keySize, Offset: keyOffset } },
+          ItemSize: 3,
+        },
+        Time: {
+          Array: { Float32Array: { File: file, Size: keySize, Offset: timeOffset } },
+          ItemSize: 1,
+        },
+      },
+    },
+  };
+}
+
+test("combineScaleTracks multiplies component-wise on the union timeline", () => {
+  const a = { times: new Float32Array([0, 1]), values: new Float32Array([2, 1, 3, 2, 1, 3]) };
+  const b = { times: new Float32Array([0, 1]), values: new Float32Array([0.5, 2, 1, 0.5, 2, 1]) };
+  const out = combineScaleTracks(a, b);
+  assert.deepEqual([...out.times], [0, 1]);
+  assert.ok(near(out.values[0], 1) && near(out.values[1], 2) && near(out.values[2], 3));
+  assert.ok(near(out.values[3], 1) && near(out.values[4], 2) && near(out.values[5], 3));
+});
+
 test("synthetic Vec3 translate clip targets the named node", async () => {
   const meshBin = packMeshBin();
   const anim = floatBin([0, 5, 0, 0, 5, 0], [0, 1]);
@@ -290,6 +401,95 @@ test("synthetic Vec3 translate clip targets the named node", async () => {
   const ch = json.animations[0].channels[0];
   assert.equal(ch.target.path, "translation");
   assert.equal(json.nodes[ch.target.node].name, "BoneA");
+});
+
+test("ScalingCompensation folds into one scale channel (no unknown-path skip)", async () => {
+  const meshBin = packMeshBin();
+  const scale = new Float32Array([2, 1, 3, 2, 1, 3]);
+  const scaleT = new Float32Array([0, 1]);
+  const comp = new Float32Array([0.5, 2, 1, 0.5, 2, 1]);
+  const compT = new Float32Array([0, 1]);
+  const bytes = new Uint8Array(
+    scale.byteLength + scaleT.byteLength + comp.byteLength + compT.byteLength
+  );
+  let off = 0;
+  bytes.set(new Uint8Array(scale.buffer), off);
+  const scaleKey = off;
+  off += scale.byteLength;
+  const scaleTime = off;
+  bytes.set(new Uint8Array(scaleT.buffer), off);
+  off += scaleT.byteLength;
+  const compKey = off;
+  bytes.set(new Uint8Array(comp.buffer), off);
+  off += comp.byteLength;
+  const compTime = off;
+  bytes.set(new Uint8Array(compT.buffer), off);
+
+  const osgjs = {
+    Generator: "test",
+    Version: 9,
+    "osg.Node": {
+      Name: "scene",
+      Children: [
+        {
+          "osg.MatrixTransform": {
+            Name: "CC_Base_L_ToeBaseShareBone_0",
+            Matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+            Children: [{ "osg.Geometry": triangleGeom(16) }],
+          },
+        },
+      ],
+      UpdateCallbacks: [
+        {
+          "osgAnimation.BasicAnimationManager": {
+            Animations: [
+              {
+                "osgAnimation.Animation": {
+                  Name: "TempMotion",
+                  Channels: [
+                    vec3Channel(
+                      "scale",
+                      "CC_Base_L_ToeBaseShareBone_0",
+                      "clip.bin.gz",
+                      scaleKey,
+                      scaleTime
+                    ),
+                    vec3Channel(
+                      "ScalingCompensation",
+                      "CC_Base_L_ToeBaseShareBone_0",
+                      "clip.bin.gz",
+                      compKey,
+                      compTime
+                    ),
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  };
+  const { json, animDebug, gltfExternal } = await convertOsgjsToGlbFromFiles({
+    "file.osgjs": JSON.stringify(osgjs),
+    "model_file.bin": meshBin,
+    "clip.bin.gz": bytes,
+  });
+  assert.equal(animDebug.emitted[0].skipped, 0);
+  assert.equal(
+    animDebug.skips.filter((s) => s.reason === "unknown-path").length,
+    0
+  );
+  assert.equal(json.animations[0].channels.length, 1);
+  const ch = json.animations[0].channels[0];
+  assert.equal(ch.target.path, "scale");
+  assert.equal(json.nodes[ch.target.node].name, "CC_Base_L_ToeBaseShareBone_0");
+  const acc = json.accessors[json.animations[0].samplers[ch.sampler].output];
+  const bv = json.bufferViews[acc.bufferView];
+  const bin = gltfExternal.bin;
+  const vals = new Float32Array(bin.buffer, bin.byteOffset + bv.byteOffset, acc.count * 3);
+  // product [1,2,3] then Y-up remapScaleYup → [1, 3, 2]
+  assert.ok(near(vals[0], 1) && near(vals[1], 3) && near(vals[2], 2));
 });
 
 test("animation TargetName matches UpdateBone alias, not only Bone.Name", async () => {

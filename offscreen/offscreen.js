@@ -86,7 +86,7 @@ async function runJob(id, url) {
   };
 
   try {
-    const { filename, bytes, kind } = await downloadModel(url, onProgress);
+    const { filename, bytes, kind, error } = await downloadModel(url, onProgress);
     const type = kind === "glb" ? "model/gltf-binary" : "application/zip";
     const blob = new Blob([bytes], { type });
     const blobUrl = URL.createObjectURL(blob);
@@ -96,6 +96,9 @@ async function runJob(id, url) {
     // Fallback: free the blob even if no revoke message ever arrives.
     setTimeout(() => revoke(id), 120_000);
     emit({ id, kind: "done", blobUrl, filename, bytes: bytes.length });
+    // Pipeline delivered a file but the job is still a hard failure (e.g. total
+    // animation loss). Keep the download; paint the row red after save starts.
+    if (error) emit({ id, kind: "error", error: String(error) });
   } catch (err) {
     console.error("[sf-dl] pipeline failed", id, err && err.message);
     emit({ id, kind: "error", error: String((err && err.message) || err) });

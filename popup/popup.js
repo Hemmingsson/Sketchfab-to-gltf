@@ -25,19 +25,20 @@ try {
 const rows = new Map();
 
 function clampPct(job) {
-  if (job.phase === "done") return 100;
+  if (job.phase === "done" || job.phase === "error") return 100;
   const n = Number(job.pct);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
 function progressClass(job) {
+  if (job.error || job.phase === "error") return "error";
   if (job.phase === "done") return "done";
-  if (job.phase === "error") return "error";
   return "";
 }
 
 function lastLogLine(job) {
+  if (job.error) return String(job.error);
   if (Array.isArray(job.log) && job.log.length > 0) {
     const line = job.log[job.log.length - 1];
     return line == null ? "" : String(line);
