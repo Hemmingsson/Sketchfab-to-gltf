@@ -5,6 +5,7 @@ import {
   convertOsgjsToGlbFromFiles,
   lookAtRotation,
   mat4TranslationRotation,
+  remapTranslationYup,
 } from "../lib/osgjs2gltf.js";
 import { extraAnimationUrls } from "../lib/pipeline.js";
 
@@ -149,9 +150,26 @@ test("convert emits a glTF camera and KHR_lights_punctual", async () => {
     }
   );
   assert.equal((json.cameras || []).length, 1);
-  assert.ok(json.nodes.some((n) => n.camera === 0));
+  const camNode = json.nodes.find((n) => n.camera === 0);
+  assert.ok(camNode);
+  // Z-up [0,1,4] → Y-up [0,4,-1]; look-at after remap.
+  assert.deepEqual(camNode.translation, [0, 4, -1]);
+  assert.deepEqual(camNode.rotation, lookAtRotation([0, 4, -1], [0, 0, 0]));
+  const lightNode = json.nodes.find((n) => n.name === "Light_0");
+  assert.deepEqual(lightNode.translation, [2, 4, -3]);
   assert.ok((json.extensionsUsed || []).includes("KHR_lights_punctual"));
   assert.equal(json.extensions.KHR_lights_punctual.lights[0].type, "directional");
+});
+
+test("warehouse saved view remaps inside the Y-up dome", () => {
+  const eye = remapTranslationYup(3.7649487973497813, -7.508247056663329, 2.510792114405669);
+  const dest = remapTranslationYup(0.9998120531765987, -2.1067883709183466, 2.4731845105076258);
+  assert.ok(Math.abs(eye[0] - 3.7649487973497813) < 1e-9);
+  assert.ok(Math.abs(eye[1] - 2.510792114405669) < 1e-9);
+  assert.ok(Math.abs(eye[2] - 7.508247056663329) < 1e-9);
+  assert.ok(Math.abs(dest[0] - 0.9998120531765987) < 1e-9);
+  assert.ok(Math.abs(dest[1] - 2.4731845105076258) < 1e-9);
+  assert.ok(Math.abs(dest[2] - 2.1067883709183466) < 1e-9);
 });
 
 test("parseViewerMaterials keeps clearcoat / sheen / displacement channels", () => {
