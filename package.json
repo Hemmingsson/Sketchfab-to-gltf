@@ -1,0 +1,42 @@
+{
+  "name": "sketchfab-to-gltf",
+  "description": "Download public Sketchfab models as a self-contained .glb with embedded textures.",
+  "version": "1.0.0",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "author": "Hemmingsson",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hemmingsson/Sketchfab-to-gltf.git"
+  },
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "check": "wxt prepare && svelte-check --tsconfig ./tsconfig.json",
+    "test": "node --test test/*.test.js",
+    "playground": "vite --config playground/vite.config.ts",
+    "playground:build": "vite build --config playground/vite.config.ts",
+    "postinstall": "wxt prepare",
+    "demo:export": "demo-video/export.sh",
+    "demo:clips": "demo-video/export-clips.sh"
+  },
+  "dependencies": {
+    "@jis3r/icons": "^2.9.0",
+    "svelte": "^5.57.1",
+    "svelte-sonner": "^1.2.1"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@theatre/core": "0.7.2",
+    "@theatre/studio": "0.7.2",
+    "@types/node": "^26.6.2",
+    "@wxt-dev/module-svelte": "^2.0.5",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.1",
+    "wxt": "^0.21.4"
+  }
+}

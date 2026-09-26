@@ -1,0 +1,325 @@
+/*
+ * Route transitions (same-document View Transitions). Document-level CSS:
+ * import from the popup and playground, never from a shadow root.
+ * Names: `popup` (PopupShell), `popup-bar` (every view's top bar),
+ * `popup-title` (list/settings titles, settings transitions only), `popup-body`
+ * (list/settings body, settings transitions only), `job-hero` +
+ * `detail-log` (DownloadDetail), and `job-list` + rows with classes
+ * `above` / `below`, named at runtime (view-transition.ts).
+ *
+ * Choreography: each phase has a start (`-at`), a duration (`-dur`) and an
+ * easing (`-ease`); the playground's Theatre.js timeline edits exactly these.
+ * `--vt-dy` (hero rise) and `--vt-push` (rows below → list bottom) are
+ * measured per transition and set on :root.
+ */
+
+:root {
+  /* Open: hero, rows, and log travel together (same clock). */
+  --vt-open-hero-at: 0ms;
+  --vt-open-hero-dur: 400ms;
+  --vt-open-hero-ease: cubic-bezier(0.2, 0, 0, 1);
+  --vt-open-exit-at: 0ms;
+  --vt-open-exit-dur: 400ms;
+  --vt-open-exit-ease: cubic-bezier(0.2, 0, 0, 1);
+  --vt-open-reveal-at: 0ms;
+  --vt-open-reveal-dur: 400ms;
+  --vt-open-reveal-ease: cubic-bezier(0.2, 0, 0, 1);
+  /* Close: the log masks away while the hero and rows return. */
+  --vt-close-hide-at: 0ms;
+  --vt-close-hide-dur: 180ms;
+  --vt-close-hide-ease: cubic-bezier(0.3, 0, 1, 1);
+  --vt-close-return-at: 50ms;
+  --vt-close-return-dur: 450ms;
+  --vt-close-return-ease: cubic-bezier(0.2, 0, 0, 1);
+  /* Settings: the body slides in over the list body, and back out. */
+  --vt-settings-at: 0ms;
+  --vt-settings-dur: 400ms;
+  --vt-settings-ease: cubic-bezier(0.2, 0, 0, 1);
+  /* Opacity fades that ride along with the phases above. */
+  --vt-fade: 180ms;
+  /* Soft edge of the log mask, as a share of the log's height. */
+  --vt-mask-edge: 15%;
+  /* How far the list body shifts left under the incoming Settings body. */
+  --vt-recede: -20%;
+  --vt-dy: 0px;
+  --vt-push: 0px;
+}
+
+/* Leading edge of the log mask (0% hidden → 100% + edge shown); registered so it animates. */
+@property --vt-mask {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 200%;
+}
+
+/* Rows and log nest inside the popup group, so the frame clips them mid-flight. */
+[data-vt-popup] {
+  view-transition-group: contain;
+}
+
+::view-transition-group(popup),
+::view-transition-group-children(popup) {
+  overflow: clip;
+  /* Matches PopupShell --vt-popup-radius (0 for the real flat popup). */
+  border-radius: var(--vt-popup-radius, var(--radius));
+  corner-shape: var(--corner);
+}
+
+/* Header chrome (list title ⇄ detail toolbar) crossfades quickly. */
+::view-transition-old(popup),
+::view-transition-new(popup) {
+  animation-duration: var(--vt-fade);
+  animation-timing-function: linear;
+}
+
+/* ── List row ⇄ detail header ─────────────────────────────── */
+
+/*
+ * Rows nest in `job-list` (the list scroller, named at runtime) and are
+ * clipped to its box, so nothing paints over the header or outside the list.
+ */
+::view-transition-group-children(job-list) {
+  overflow: clip;
+}
+
+/* Old and new rows look the same; move the live new one instead of crossfading. */
+::view-transition-group(job-hero) {
+  animation-duration: var(--vt-open-hero-dur);
+  animation-timing-function: var(--vt-open-hero-ease);
+  animation-delay: var(--vt-open-hero-at);
+  animation-fill-mode: both;
+  z-index: 2;
+}
+
+::view-transition-old(job-hero) {
+  display: none;
+}
+
+::view-transition-new(job-hero) {
+  animation: none;
+}
+
+/*
+ * Open: the hero rises; rows above rise and fade; rows below push out. The log
+ * rides the same clock — slides up attached under the hero while unmasking.
+ */
+::view-transition-old(*.above) {
+  animation:
+    vt-rise var(--vt-open-exit-dur) var(--vt-open-exit-ease) var(--vt-open-exit-at) both,
+    vt-fade-out var(--vt-fade) linear var(--vt-open-exit-at) both;
+}
+
+::view-transition-old(*.below) {
+  animation: vt-push var(--vt-open-exit-dur) var(--vt-open-exit-ease) var(--vt-open-exit-at) both;
+}
+
+/*
+ * Log stays flush under the hero: translate by `--vt-dy` on the hero/return
+ * clocks. Animate old/new (not the group) so UA group positioning stays intact.
+ */
+::view-transition-group(detail-log) {
+  z-index: 1;
+}
+
+::view-transition-old(detail-log),
+::view-transition-new(detail-log) {
+  mask-image: linear-gradient(#000 calc(var(--vt-mask) - var(--vt-mask-edge)), transparent var(--vt-mask));
+}
+
+::view-transition-new(detail-log) {
+  animation:
+    vt-unmask var(--vt-open-reveal-dur) var(--vt-open-reveal-ease) var(--vt-open-reveal-at) both,
+    vt-log-follow-open var(--vt-open-hero-dur) var(--vt-open-hero-ease) var(--vt-open-hero-at) both;
+}
+
+/* Close: mask away while following the hero back (explicit keyframes, not reverse). */
+::view-transition-old(detail-log) {
+  animation:
+    vt-mask var(--vt-close-hide-dur) var(--vt-close-hide-ease) var(--vt-close-hide-at) both,
+    vt-log-follow-close var(--vt-close-return-dur) var(--vt-close-return-ease) var(--vt-close-return-at)
+      both;
+}
+
+html:active-view-transition-type(detail-close)::view-transition-group(job-hero) {
+  animation-duration: var(--vt-close-return-dur);
+  animation-timing-function: var(--vt-close-return-ease);
+  animation-delay: var(--vt-close-return-at);
+}
+
+::view-transition-new(*.above) {
+  animation:
+    vt-rise-back var(--vt-close-return-dur) var(--vt-close-return-ease) var(--vt-close-return-at) both,
+    vt-fade-in var(--vt-fade) linear var(--vt-close-return-at) both;
+}
+
+::view-transition-new(*.below) {
+  animation: vt-push-back var(--vt-close-return-dur) var(--vt-close-return-ease)
+    var(--vt-close-return-at) both;
+}
+
+/* ── Top bar: shared by every view, so it holds still ────────── */
+
+[data-vt-bar] {
+  view-transition-name: popup-bar;
+}
+
+::view-transition-group(popup-bar) {
+  z-index: 3;
+}
+
+::view-transition-old(popup-bar),
+::view-transition-new(popup-bar) {
+  height: 100%;
+  animation-duration: var(--vt-fade);
+  animation-timing-function: linear;
+}
+
+/* ── Settings: only the body slides; the bar stays put ────────── */
+
+html:active-view-transition-type(settings-open, settings-close) {
+  & [data-vt-body] {
+    view-transition-name: popup-body;
+  }
+
+  & [data-vt-title] {
+    view-transition-name: popup-title;
+  }
+
+  &::view-transition-old(popup-body),
+  &::view-transition-new(popup-body) {
+    height: 100%;
+    object-fit: none;
+    object-position: left top;
+    mix-blend-mode: normal;
+  }
+}
+
+::view-transition-group(popup-title) {
+  z-index: 4;
+  animation-duration: var(--vt-settings-dur);
+  animation-timing-function: var(--vt-settings-ease);
+  animation-delay: var(--vt-settings-at);
+}
+
+::view-transition-old(popup-title),
+::view-transition-new(popup-title) {
+  height: 100%;
+  animation-duration: var(--vt-fade);
+  animation-timing-function: linear;
+}
+
+html:active-view-transition-type(settings-open) {
+  &::view-transition-old(popup-body) {
+    animation:
+      vt-recede var(--vt-settings-dur) var(--vt-settings-ease) var(--vt-settings-at) both,
+      vt-fade-out var(--vt-fade) linear var(--vt-settings-at) both;
+  }
+
+  &::view-transition-new(popup-body) {
+    animation: vt-slide-in var(--vt-settings-dur) var(--vt-settings-ease) var(--vt-settings-at) both;
+  }
+}
+
+html:active-view-transition-type(settings-close) {
+  &::view-transition-old(popup-body) {
+    z-index: 1;
+    animation: vt-slide-out var(--vt-settings-dur) var(--vt-settings-ease) var(--vt-settings-at) both;
+  }
+
+  &::view-transition-new(popup-body) {
+    animation:
+      vt-return var(--vt-settings-dur) var(--vt-settings-ease) var(--vt-settings-at) both,
+      vt-fade-in var(--vt-fade) linear var(--vt-settings-at) both;
+  }
+}
+
+@keyframes vt-rise {
+  to {
+    transform: translateY(calc(-1 * var(--vt-dy)));
+  }
+}
+
+@keyframes vt-push {
+  to {
+    transform: translateY(var(--vt-push));
+  }
+}
+
+@keyframes vt-rise-back {
+  from {
+    transform: translateY(calc(-1 * var(--vt-dy)));
+  }
+}
+
+@keyframes vt-push-back {
+  from {
+    transform: translateY(var(--vt-push));
+  }
+}
+
+/* Log stays edge-to-edge under the hero while it rises / returns. */
+@keyframes vt-log-follow-open {
+  from {
+    transform: translateY(var(--vt-dy));
+  }
+}
+
+@keyframes vt-log-follow-close {
+  to {
+    transform: translateY(var(--vt-dy));
+  }
+}
+
+@keyframes vt-unmask {
+  from {
+    --vt-mask: 0%;
+  }
+  to {
+    --vt-mask: calc(100% + var(--vt-mask-edge));
+  }
+}
+
+@keyframes vt-mask {
+  from {
+    --vt-mask: calc(100% + var(--vt-mask-edge));
+  }
+  to {
+    --vt-mask: 0%;
+  }
+}
+
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes vt-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes vt-slide-out {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes vt-recede {
+  to {
+    transform: translateX(var(--vt-recede));
+  }
+}
+
+@keyframes vt-return {
+  from {
+    transform: translateX(var(--vt-recede));
+  }
+}

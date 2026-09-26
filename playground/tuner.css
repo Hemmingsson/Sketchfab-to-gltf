@@ -1,0 +1,14 @@
+/*
+ * Transition tuner page. The page root is not captured in route transitions:
+ * only the popup's named parts become snapshots, so the Theatre.js studio stays
+ * live and clickable while a transition is held for scrubbing (pointer events
+ * then pass through the overlay). Named elements are not hit-testable
+ * mid-transition, so never name the studio UI.
+ */
+:root {
+  view-transition-name: none;
+}
+
+html.vt-scrubbing::view-transition {
+  pointer-events: none;
+}

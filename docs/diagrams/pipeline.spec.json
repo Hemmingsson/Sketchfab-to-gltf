@@ -1,0 +1,142 @@
+{
+  "topology": "dag",
+  "orientation": "horizontal",
+  "title": "From a public Sketchfab model to a usable 3D file",
+  "chrome": "plain",
+  "node_style": "card+glyph",
+  "glyph_tint": "full",
+  "edge_motion": "particle",
+  "marker": "arrow",
+  "spine": [
+    "viewer",
+    "mesh",
+    "convert",
+    "glb"
+  ],
+  "chassis": {
+    "card_min_w": 236,
+    "hero_min_w": 236,
+    "node": {
+      "h": 72
+    },
+    "hero": {
+      "h": 56
+    },
+    "rank_gap": 90,
+    "row_gap": 44,
+    "join_trunk": 0
+  },
+  "nodes": [
+    {
+      "id": "viewer",
+      "label": "Read public viewer",
+      "kind": "globe",
+      "note": "src/lib/pipeline.js: downloadModel; src/lib/sf-api.js: fetchViewerInfo. Entry from a model page, card or collection; requests are anonymous."
+    },
+    {
+      "id": "mesh",
+      "label": "Decode mesh",
+      "kind": "lock",
+      "note": "src/lib/pipeline.js: extractStaticKey, decryptBinzBytes, extraAnimationUrls. The viewer script supplies the static key; viewer data supplies diter.b and encrypted file URLs. Animation keyframes are fetched when available.",
+      "desc": "Decrypt with WASM"
+    },
+    {
+      "id": "textures",
+      "label": "Descramble textures",
+      "kind": "image",
+      "note": "src/lib/pipeline.js: fetchTextures and packOrmMaps. maxTextureEdge selects original/4096/2048; ORM combines material channels. This is asset flow, not parallel execution.",
+      "desc": "Pack ORM"
+    },
+    {
+      "id": "convert",
+      "label": "Build glTF",
+      "kind": "box",
+      "note": "src/lib/pipeline.js: convertOsgjsToGlbFromFiles. Uses decoded meshes, textures, viewer materials and optional viewer camera/lights."
+    },
+    {
+      "id": "glb",
+      "label": "GLB file",
+      "kind": "file",
+      "role": "default"
+    },
+    {
+      "id": "gltf",
+      "label": "glTF ZIP",
+      "kind": "file",
+      "note": "src/lib/pipeline.js: packGltfFiles. Contains model.gltf, model.bin and textures/."
+    }
+  ],
+  "edges": [
+    {
+      "source": "viewer",
+      "target": "mesh",
+      "relation": "assert"
+    },
+    {
+      "source": "viewer",
+      "target": "textures",
+      "relation": "assert"
+    },
+    {
+      "source": "viewer",
+      "target": "convert",
+      "relation": "assert",
+      "label": "Materials + scene",
+      "label_style": "chip",
+      "state": "inert"
+    },
+    {
+      "source": "mesh",
+      "target": "convert",
+      "relation": "assert"
+    },
+    {
+      "source": "textures",
+      "target": "convert",
+      "relation": "assert"
+    },
+    {
+      "source": "convert",
+      "target": "glb",
+      "relation": "assert"
+    },
+    {
+      "source": "convert",
+      "target": "gltf",
+      "edge_motion": "dash",
+      "state": "inert"
+    }
+  ],
+  "regions": [
+    {
+      "label": "01 \u00b7 Read",
+      "members": [
+        "viewer"
+      ],
+      "kind": "band"
+    },
+    {
+      "label": "02 \u00b7 Prepare",
+      "members": [
+        "mesh",
+        "textures"
+      ],
+      "kind": "band"
+    },
+    {
+      "label": "03 \u00b7 Convert",
+      "members": [
+        "convert"
+      ],
+      "kind": "band"
+    },
+    {
+      "label": "04 \u00b7 Save",
+      "members": [
+        "glb",
+        "gltf"
+      ],
+      "kind": "band"
+    }
+  ]
+}

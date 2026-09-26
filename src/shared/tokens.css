@@ -1,0 +1,49 @@
+:root {
+  color-scheme: light dark;
+  --primary: #1caad9;
+  --secondary: #e9256d;
+  --success: #1ac95d;
+  --warning: #ff9e3a;
+  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Circular-arc fallback; @supports below bumps size for continuous squircles. */
+  --radius: 12px;
+  --corner: round;
+  --shadow-elevated: 0 16px 48px color-mix(in oklab, #000 12%, transparent);
+
+  --bg: #f6f7f8;
+  --panel: #ffffff;
+  --fg: #14171a;
+  --muted: #667078;
+  --muted-bg: #e8ebed;
+  --border: #e2e5e8;
+  --warn-fg: #a35400;
+  --warn-bg: color-mix(in oklab, var(--warning) 12%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1012;
+    --panel: #161a1e;
+    --fg: #f2f4f5;
+    --muted: #9aa3ab;
+    --muted-bg: #242a30;
+    --border: #2a3036;
+    --warn-fg: #ffb866;
+    --warn-bg: color-mix(in oklab, var(--warning) 14%, transparent);
+  }
+}
+
+/* Native squircles (superellipse(2)). Larger radius = full continuous-corner look. */
+@supports (corner-shape: squircle) {
+  :root {
+    --radius: 24px;
+    --corner: squircle;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}

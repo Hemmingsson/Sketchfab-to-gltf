@@ -1,0 +1,1197 @@
+<!doctype html>
+<html
+  lang="en"
+  data-resolution="landscape"
+  data-composition-variables='[{"id":"clip","type":"string","label":"Clip (model | cards | collection)","default":"model"}]'
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <!--
+      Three 16:9 feature clips, one per injected button: model page, card grid, collection.
+      Same look as index.html without browser chrome: the page fills the frame and
+      export-clips.sh cuts the same squircle corners as the main demo. 4 s loop: cursor in,
+      click, 0→100% in 1 s, out. Pick the clip with the `clip` composition variable.
+    -->
+    <style>
+      /* Tokens: src/shared/tokens.css (light). */
+      :root {
+        --primary: #1caad9;
+        --secondary: #e9256d;
+        --success: #1ac95d;
+        --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --bg: #f6f7f8;
+        --panel: #ffffff;
+        --fg: #14171a;
+        --muted: #667078;
+        --muted-bg: #e8ebed;
+        --border: #e2e5e8;
+        --viewer: #202121;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: transparent;
+        font-family: var(--font);
+        color: var(--fg);
+        -webkit-font-smoothing: antialiased;
+      }
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      #scene {
+        position: absolute;
+        inset: 0;
+      }
+
+      /* ── World: authored at 1280×720, scaled 1.5× to the 1920×1080 frame ── */
+      #world {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1280px;
+        height: 720px;
+        transform-origin: 0 0;
+        transform: scale(1.5);
+      }
+      /* No browser chrome: the page is the card; export-clips.sh cuts the squircle corners. */
+      .window {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        background: var(--bg);
+      }
+
+      /* ── Page shell ── */
+      .page {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        background: var(--bg);
+        overflow: hidden;
+        display: none;
+      }
+      [data-clip="model"] #p-model,
+      [data-clip="cards"] #p-cards,
+      [data-clip="collection"] #p-collection {
+        display: block;
+      }
+      .sitenav {
+        height: 48px;
+        background: #fff;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 20px;
+      }
+      .logo {
+        width: 26px;
+        height: 26px;
+        display: grid;
+        place-items: center;
+        margin-right: 6px;
+      }
+      .spacer {
+        flex: 1;
+      }
+      .sk {
+        height: 10px;
+        border-radius: 5px;
+        background: var(--muted-bg);
+        flex-shrink: 0;
+      }
+      .sk.pill {
+        height: 30px;
+        border-radius: 15px;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .chips span {
+        padding: 3px 9px;
+        border-radius: 999px;
+        background: var(--muted-bg);
+        color: var(--muted);
+        font-size: 11.5px;
+      }
+
+      /* ── Model page ── */
+      .viewer {
+        position: absolute;
+        left: 20px;
+        top: 66px;
+        width: 860px;
+        height: 380px;
+        border-radius: 12px;
+        overflow: hidden;
+        background: var(--viewer);
+      }
+      /* CSS 3D cube: six flat faces, shaded per face, turned by renderAt(t). */
+      .cube-stage {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 150px;
+        height: 150px;
+        margin: -84px 0 0 -75px;
+        perspective: 700px;
+        --c: #1caad9;
+      }
+      .cube-floor {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 250px;
+        height: 38px;
+        margin: 76px 0 0 -125px;
+        border-radius: 50%;
+        background: radial-gradient(closest-side, rgb(0 0 0 / 0.55), transparent);
+      }
+      .cube {
+        position: absolute;
+        inset: 0;
+        transform-style: preserve-3d;
+      }
+      .cube i {
+        position: absolute;
+        inset: 0;
+        background: var(--c);
+        box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+      }
+      .cube i::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: var(--tint);
+      }
+      .cube .f { transform: translateZ(75px); --tint: transparent; }
+      .cube .b { transform: rotateY(180deg) translateZ(75px); --tint: rgb(0 0 0 / 0.4); }
+      .cube .r { transform: rotateY(90deg) translateZ(75px); --tint: rgb(0 0 0 / 0.3); }
+      .cube .l { transform: rotateY(-90deg) translateZ(75px); --tint: rgb(0 0 0 / 0.12); }
+      .cube .t { transform: rotateX(90deg) translateZ(75px); --tint: rgb(255 255 255 / 0.28); }
+      .cube .u { transform: rotateX(-90deg) translateZ(75px); --tint: rgb(0 0 0 / 0.5); }
+      .viewer-ui {
+        position: absolute;
+        right: 14px;
+        bottom: 12px;
+        display: flex;
+        gap: 8px;
+      }
+      .viewer-ui span {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: rgb(255 255 255 / 0.12);
+      }
+      .model-title {
+        position: absolute;
+        left: 20px;
+        top: 468px;
+        height: 16px;
+        border-radius: 8px;
+        background: color-mix(in oklab, var(--muted-bg) 60%, var(--border));
+      }
+      .byline {
+        position: absolute;
+        left: 20px;
+        top: 498px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .actions {
+        position: absolute;
+        left: 20px;
+        top: 516px;
+        display: flex;
+        align-items: center;
+        height: 66px;
+        font-family: "Open Sans", var(--font);
+        font-size: 28px;
+      }
+      /* Download controls, cursor and toast are drawn at 2× so they read at README size. */
+      .ghost-action {
+        height: 18px;
+        border-radius: 9px;
+        margin-right: 50px;
+      }
+      /* Entry wrapper: grows from 0 so the native actions slide aside. */
+      .inject {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        flex-shrink: 0;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+      .inject .glow {
+        position: absolute;
+        inset: -8px 42px -8px -8px;
+        border-radius: 20px;
+        background: color-mix(in oklab, var(--primary) 22%, transparent);
+        opacity: 0;
+      }
+      #page-btn {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        height: 66px;
+        margin-right: 50px;
+        padding: 0 28px;
+        border-radius: 14px;
+        background: var(--primary);
+        color: #fff;
+        font-weight: 600;
+        white-space: nowrap;
+        line-height: 1;
+      }
+      #page-btn .icon {
+        width: 28px;
+        height: 32px;
+        margin-right: 10px;
+        display: inline-flex;
+        align-items: center;
+      }
+      #page-btn .icon svg {
+        width: 28px;
+        height: 28px;
+      }
+      #page-btn.sf-dl--progress .label {
+        font-variant-numeric: tabular-nums;
+        min-width: 9em;
+      }
+      .shimmer {
+        background: linear-gradient(
+          100deg,
+          currentColor 0%,
+          currentColor 38%,
+          color-mix(in srgb, currentColor 45%, transparent) 50%,
+          currentColor 62%,
+          currentColor 100%
+        );
+        background-size: 220% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      #page-btn.sf-dl--done {
+        background: var(--success);
+      }
+      #page-btn.sf-dl--done .label {
+        font-weight: 600;
+      }
+      .page-rule {
+        position: absolute;
+        left: 20px;
+        width: 860px;
+        top: 600px;
+        border-top: 1px solid var(--border);
+      }
+      .desc-sk {
+        position: absolute;
+        left: 20px;
+        top: 620px;
+        display: grid;
+        gap: 10px;
+      }
+      /* Sidebar: stat tiles 2×2, then tag chips */
+      .stats {
+        position: absolute;
+        left: 900px;
+        right: 20px;
+        top: 66px;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+      .stat {
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+        display: grid;
+        gap: 8px;
+      }
+      .stat .sk + .sk {
+        height: 12px;
+        background: color-mix(in oklab, var(--muted-bg) 60%, var(--border));
+      }
+      /* Tag chips as skeleton pills: no category text. */
+      .model-chips span {
+        height: 20px;
+      }
+      .model-chips {
+        position: absolute;
+        left: 900px;
+        right: 20px;
+        top: 214px;
+        padding: 14px;
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+      }
+
+      /* ── Card grid (browse + collection) ── */
+      .grid {
+        position: absolute;
+        left: 20px;
+        right: 20px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+      }
+      .cm {
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .cm .thumb {
+        position: relative;
+        height: 150px;
+        background: var(--viewer);
+        overflow: hidden;
+      }
+      .cm .thumb > svg {
+        position: absolute;
+        inset: 14px 0 6px;
+        width: 100%;
+        height: calc(100% - 20px);
+      }
+      .cm .shade {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(transparent 55%, rgb(0 0 0 / 0.35));
+        opacity: 0;
+      }
+      .cm .info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 40px;
+        padding: 0 10px;
+        min-width: 0;
+      }
+      /* Views · comments · likes icons (no counts), right-aligned like Sketchfab's card footer. */
+      .cm .cm-stats {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+        color: color-mix(in oklab, var(--muted) 70%, transparent);
+      }
+      .cm .cm-stats svg {
+        width: 20px;
+        height: 20px;
+      }
+      /* CardDownloadButton: corner icon, white 50% idle, white on hover, green done. */
+      .card-dl {
+        position: absolute;
+        right: 8px;
+        top: 8px;
+        width: 52px;
+        height: 52px;
+        display: grid;
+        place-items: center;
+        color: rgb(255 255 255 / 0.6);
+        filter: drop-shadow(0 2px 4px rgb(0 0 0 / 0.35));
+        opacity: 0;
+      }
+      .card-dl svg {
+        width: 40px;
+        height: 40px;
+      }
+      .card-dl.hover {
+        color: #fff;
+      }
+      .card-dl.done {
+        color: var(--success);
+      }
+      .card-dl .spin {
+        position: absolute;
+        width: 32px;
+        height: 32px;
+        border: 4px solid rgb(255 255 255 / 0.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        display: none;
+      }
+      .card-dl.busy svg {
+        display: none;
+      }
+      .card-dl.busy .spin {
+        display: block;
+      }
+      #tip {
+        position: absolute;
+        padding: 10px 16px;
+        border-radius: 10px;
+        background: rgb(20 23 26 / 0.92);
+        color: #fff;
+        font-size: 22px;
+        font-weight: 550;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+        opacity: 0;
+        transform-origin: 50% 100%;
+      }
+      #tip::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        bottom: -8px;
+        margin-left: -8px;
+        border: 8px solid transparent;
+        border-bottom: 0;
+        border-top-color: rgb(20 23 26 / 0.92);
+      }
+
+      /* ── Browse page: a plain grid under the site nav ── */
+      #p-cards .grid {
+        top: 68px;
+      }
+
+      /* ── Collection page ── */
+      .coll-head {
+        position: absolute;
+        left: 20px;
+        right: 20px;
+        top: 68px;
+        display: grid;
+        justify-items: start;
+        gap: 10px;
+      }
+      .coll-head .sk.title {
+        height: 16px;
+        border-radius: 8px;
+        background: color-mix(in oklab, var(--muted-bg) 60%, var(--border));
+      }
+      /* Skeleton lines where the owner and model count would sit. */
+      .coll-sk {
+        display: grid;
+        gap: 7px;
+        padding-top: 2px;
+      }
+      .coll-actions {
+        position: absolute;
+        left: 20px;
+        top: 150px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 68px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        height: 64px;
+        padding: 0 26px;
+        border-radius: 8px;
+        border: 2px solid var(--border);
+        background: #fff;
+        color: var(--muted);
+        font-size: 26px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      /* Our button, filled primary so it stands out from Sketchfab's outlined ones */
+      .btn > svg {
+        width: 26px;
+        height: 26px;
+      }
+      .btn .sk {
+        height: 14px;
+        border-radius: 7px;
+      }
+      #coll-btn {
+        border-color: var(--primary);
+        background: var(--primary);
+        color: #fff;
+        font-variant-numeric: tabular-nums;
+        margin-right: 12px;
+      }
+      #coll-btn .fi {
+        width: 24.6px;
+        height: 32px;
+        display: block;
+      }
+      .coll-actions .inject .glow {
+        inset: -6px 6px -6px -6px;
+        border-radius: 12px;
+      }
+      #p-collection .grid {
+        top: 236px;
+      }
+
+      /* ── Sonner toast (PageToaster look) ── */
+      #toast {
+        position: absolute;
+        right: 24px;
+        bottom: 24px;
+        width: 420px;
+        padding: 22px 26px;
+        background: var(--panel);
+        border: 2px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 24px;
+        opacity: 0;
+      }
+      #toast .t-icon {
+        width: 52px;
+        height: 52px;
+        margin: 0 10px 0 0;
+        flex-shrink: 0;
+        position: relative;
+      }
+      #toast .t-icon svg {
+        position: absolute;
+        inset: 0;
+        width: 52px;
+        height: 52px;
+      }
+      #toast .t-body {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      /* No copy in the toast: a darker title bar over a description bar. */
+      #toast .t-title {
+        width: 250px;
+        height: 18px;
+        border-radius: 9px;
+        background: color-mix(in oklab, var(--muted-bg) 45%, var(--border));
+      }
+      #toast .t-close {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 36px;
+        height: 36px;
+        transform: translate(-35%, -35%);
+        border-radius: 50%;
+        background: var(--panel);
+        border: 2px solid var(--border);
+        color: var(--muted);
+        display: grid;
+        place-items: center;
+      }
+      #toast .t-close svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      /* ── Cursor ── */
+      #cursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 0;
+        height: 0;
+      }
+      #ptr {
+        position: absolute;
+        left: 0;
+        top: 0;
+        transform-origin: 0 0;
+      }
+      #ptr svg {
+        position: absolute;
+        display: block;
+        filter: drop-shadow(0 1.5px 2px rgb(0 0 0 / 0.28));
+      }
+      #cur-arrow {
+        left: -3px;
+        top: -2px;
+        width: 20px;
+        height: 28px;
+      }
+      #cur-hand {
+        left: -8px;
+        top: -2px;
+        width: 22px;
+        height: 24px;
+        opacity: 0;
+      }
+      #ring {
+        position: absolute;
+        left: -14px;
+        top: -14px;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 2px solid rgb(20 23 26 / 0.45);
+        background: rgb(20 23 26 / 0.06);
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <!-- Shaded primitives, 160×90. Body color comes from --c on the <svg>; light and shade are white/black overlays. -->
+        <radialGradient id="g-hi" cx="0.36" cy="0.3" r="0.55"><stop offset="0" stop-color="#fff" stop-opacity="0.6" /><stop offset="1" stop-color="#fff" stop-opacity="0" /></radialGradient>
+        <radialGradient id="g-sh" cx="0.4" cy="0.35" r="0.75"><stop offset="0.4" stop-color="#000" stop-opacity="0" /><stop offset="1" stop-color="#000" stop-opacity="0.5" /></radialGradient>
+        <linearGradient id="g-side" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0.3" /><stop offset="0.42" stop-color="#fff" stop-opacity="0" /><stop offset="1" stop-color="#000" stop-opacity="0.42" /></linearGradient>
+        <linearGradient id="g-vert" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.35" /><stop offset="0.5" stop-color="#fff" stop-opacity="0" /><stop offset="1" stop-color="#000" stop-opacity="0.42" /></linearGradient>
+        <symbol id="s-cube" viewBox="0 0 160 90">
+          <ellipse cx="80" cy="76" rx="36" ry="5" fill="#0f1418" />
+          <path style="fill: var(--c)" d="M80 14 L108 28 L108 60 L80 74 L52 60 L52 28 Z" />
+          <path fill="#fff" fill-opacity="0.28" d="M80 14 L108 28 L80 42 L52 28 Z" />
+          <path fill="#000" fill-opacity="0.32" d="M80 42 L108 28 L108 60 L80 74 Z" />
+        </symbol>
+        <symbol id="s-sphere" viewBox="0 0 160 90">
+          <ellipse cx="80" cy="77" rx="26" ry="4.5" fill="#0f1418" />
+          <circle cx="80" cy="44" r="29" style="fill: var(--c)" />
+          <circle cx="80" cy="44" r="29" fill="url(#g-sh)" />
+          <circle cx="80" cy="44" r="29" fill="url(#g-hi)" />
+        </symbol>
+        <symbol id="s-cone" viewBox="0 0 160 90">
+          <ellipse cx="80" cy="74" rx="32" ry="5" fill="#0f1418" />
+          <path style="fill: var(--c)" d="M54 68 L80 12 L106 68 A26 7 0 0 1 54 68 Z" />
+          <path fill="url(#g-side)" d="M54 68 L80 12 L106 68 A26 7 0 0 1 54 68 Z" />
+        </symbol>
+        <symbol id="s-cylinder" viewBox="0 0 160 90">
+          <ellipse cx="80" cy="74" rx="32" ry="5" fill="#0f1418" />
+          <path style="fill: var(--c)" d="M58 24 L58 66 A22 7 0 0 0 102 66 L102 24 Z" />
+          <path fill="url(#g-side)" d="M58 24 L58 66 A22 7 0 0 0 102 66 L102 24 Z" />
+          <ellipse cx="80" cy="24" rx="22" ry="7" style="fill: var(--c)" />
+          <ellipse cx="80" cy="24" rx="22" ry="7" fill="#fff" fill-opacity="0.3" />
+        </symbol>
+        <symbol id="s-pyramid" viewBox="0 0 160 90">
+          <ellipse cx="82" cy="70" rx="38" ry="5" fill="#0f1418" />
+          <path style="fill: var(--c)" d="M80 12 L50 62 L88 72 Z" />
+          <path fill="#fff" fill-opacity="0.14" d="M80 12 L50 62 L88 72 Z" />
+          <path style="fill: var(--c)" d="M80 12 L88 72 L112 56 Z" />
+          <path fill="#000" fill-opacity="0.36" d="M80 12 L88 72 L112 56 Z" />
+        </symbol>
+        <symbol id="s-torus" viewBox="0 0 160 90">
+          <ellipse cx="80" cy="72" rx="36" ry="5" fill="#0f1418" />
+          <path fill-rule="evenodd" style="fill: var(--c)" d="M44 44 a36 21 0 1 0 72 0 a36 21 0 1 0 -72 0 Z M66 42 a14 7 0 1 0 28 0 a14 7 0 1 0 -28 0 Z" />
+          <path fill-rule="evenodd" fill="url(#g-vert)" d="M44 44 a36 21 0 1 0 72 0 a36 21 0 1 0 -72 0 Z M66 42 a14 7 0 1 0 28 0 a14 7 0 1 0 -28 0 Z" />
+          <path d="M66 42 a14 7 0 0 1 28 0" stroke="#000" stroke-opacity="0.35" stroke-width="3" fill="none" />
+        </symbol>
+        <symbol id="s-capsule" viewBox="0 0 160 90">
+          <ellipse cx="80" cy="76" rx="34" ry="4.5" fill="#0f1418" />
+          <g transform="rotate(-38 80 44)">
+            <rect x="65" y="10" width="30" height="68" rx="15" style="fill: var(--c)" />
+            <rect x="65" y="10" width="30" height="68" rx="15" fill="url(#g-side)" />
+            <rect x="70" y="18" width="6" height="22" rx="3" fill="#fff" fill-opacity="0.35" />
+          </g>
+        </symbol>
+        <symbol id="s-octa" viewBox="0 0 160 90">
+          <ellipse cx="80" cy="79" rx="22" ry="4" fill="#0f1418" />
+          <path style="fill: var(--c)" d="M80 8 L54 42 L80 76 L106 40 Z" />
+          <path fill="#fff" fill-opacity="0.22" d="M80 8 L54 42 L86 50 Z" />
+          <path fill="#fff" fill-opacity="0.06" d="M80 8 L86 50 L106 40 Z" />
+          <path fill="#000" fill-opacity="0.24" d="M54 42 L86 50 L80 76 Z" />
+          <path fill="#000" fill-opacity="0.44" d="M86 50 L106 40 L80 76 Z" />
+        </symbol>
+        <!-- lucide -->
+        <symbol id="i-card-dl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M3 15v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4" />
+        </symbol>
+        <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0" /><circle cx="12" cy="12" r="3" />
+        </symbol>
+        <symbol id="i-comment" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+        </symbol>
+        <symbol id="i-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11.53 2.3a.53.53 0 0 1 .94 0l2.31 4.68a2.12 2.12 0 0 0 1.6 1.16l5.16.76a.53.53 0 0 1 .3.9l-3.74 3.63a2.12 2.12 0 0 0-.61 1.88l.88 5.14a.53.53 0 0 1-.77.56l-4.62-2.43a2.12 2.12 0 0 0-1.97 0L6.4 21.01a.53.53 0 0 1-.77-.56l.88-5.15a2.12 2.12 0 0 0-.61-1.87L2.16 9.8a.53.53 0 0 1 .3-.9l5.17-.76a2.12 2.12 0 0 0 1.6-1.16z" />
+        </symbol>
+        <symbol id="i-dl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" />
+        </symbol>
+        <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 12l5 5L20 6" />
+        </symbol>
+        <symbol id="i-circle-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" />
+        </symbol>
+        <symbol id="i-pinwheel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 12a1 1 0 0 1-10 0 1 1 0 0 0-10 0" /><path d="M7 20.7a1 1 0 1 1 5-8.7 1 1 0 1 0 5-8.6" /><path d="M7 3.3a1 1 0 1 1 5 8.6 1 1 0 1 0 5 8.6" /><circle cx="12" cy="12" r="10" />
+        </symbol>
+        <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+        </symbol>
+        <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m16 18 6-6-6-6" /><path d="m8 6-6 6 6 6" />
+        </symbol>
+        <symbol id="i-share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4" /><path d="m15.4 6.5-6.8 4" />
+        </symbol>
+        <symbol id="i-sketchfab" viewBox="0 0 24 24">
+          <path fill="#1CAAD9" d="M11.3 0A11.983 11.983 0 0 0 .037 11a13.656 13.656 0 0 0 0 2 11.983 11.983 0 0 0 11.29 11h1.346a12.045 12.045 0 0 0 11.3-11.36 13.836 13.836 0 0 0 0-1.7A12.049 12.049 0 0 0 12.674 0zM15 6.51l2.99 1.74s-6.064 3.24-6.084 3.24S5.812 8.27 5.8 8.26l2.994-1.77 2.992-1.76zm-6.476 5.126L11 13v5.92l-2.527-1.4-2.46-1.43v-5.76zm9.461 1.572v2.924L15.5 17.574 13 19.017v-6.024l2.489-1.345 2.5-1.355z" />
+        </symbol>
+        <!-- FileIcon.svelte (glb) -->
+        <symbol id="f-glb" viewBox="0 0 46 60">
+          <g fill="currentColor">
+            <path d="M30.78 50.91c.98 0 1.48.5 1.48 1.26s-.5 1.23-1.7 1.23h-1.22v-2.5zm-.11-3.64c.79 0 1.24.42 1.24 1.08s-.45 1.11-1.48 1.11h-1.09v-2.2z" />
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M31.47 21.75v9.51l-8.23 4.76L15 31.26v-9.5L23.24 17zm-7.24 5.34v6.04l5.24-3.02v-6.05zM17 30.11l5.23 3.02v-6.05L17 24.06zm1-7.78 5.24 3.02 5.23-3.02-5.23-3.02z" />
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M45 15.38v26.29a2 2 0 0 1 1 1.72V54.5a5 5 0 0 1-5 5H5a5 5 0 0 1-5-5V39.96a2 2 0 0 1 1-1.72V4.5a4 4 0 0 1 4-4h25.12zM14.66 45.5c-2.67 0-4.13 1.73-4.13 4.2v1.16c0 2.44 1.24 4.31 4.13 4.31 2.62 0 3.86-1.67 3.86-3.49v-1.8h-3.75v1.58h1.62v.4c0 .78-.61 1.46-1.68 1.46-1.4 0-1.9-1.06-1.9-2.46v-1.13c0-1.52.65-2.38 1.84-2.38 1 0 1.58.6 1.67 1.4h2.2c-.05-1.7-1.36-3.25-3.86-3.25m5.3 9.5h6v-1.9h-3.74v-7.44h-2.26zm7.15 0h4.2c1.82 0 3.25-.95 3.25-2.65 0-1.47-1.07-2.18-2.11-2.25V50c.9-.18 1.67-.85 1.67-2.04 0-1.44-1.16-2.3-2.87-2.3H27.1zM5 2.5a2 2 0 0 0-2 2v33.46h14.18a2 2 0 0 1 1.5.69l2.4 2.74H43V16.8H32.71a4 4 0 0 1-4-4V2.5z" />
+          </g>
+        </symbol>
+      </defs>
+    </svg>
+
+    <div id="root" data-composition-id="main" data-start="0" data-duration="4" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="4" data-track-index="0">
+        <div id="world">
+          <div class="window">
+            <!-- Site nav, shared by all three pages (cloned into each below) -->
+            <template id="sitenav">
+              <div class="sitenav">
+                <span class="logo"><svg width="26" height="26"><use href="#i-sketchfab" /></svg></span>
+                <span class="sk" style="width: 52px"></span>
+                <span class="sk" style="width: 60px"></span>
+                <span class="sk" style="width: 44px"></span>
+                <span class="sk pill" style="width: 190px; margin-left: 24px"></span>
+                <span class="spacer"></span>
+                <span class="sk" style="width: 40px"></span>
+                <span class="sk pill" style="width: 76px; background: var(--border)"></span>
+              </div>
+            </template>
+
+            <!-- ── Clip: model page ── -->
+            <div class="page" id="p-model">
+              <div class="viewer">
+                <div class="cube-floor" id="cube-floor"></div>
+                <div class="cube-stage"><div class="cube" id="cube"><i class="f"></i><i class="b"></i><i class="r"></i><i class="l"></i><i class="t"></i><i class="u"></i></div></div>
+                <div class="viewer-ui"><span></span><span></span><span></span></div>
+              </div>
+              <div class="model-title" style="width: 230px"></div>
+              <div class="byline"><span class="sk" style="width: 150px"></span></div>
+              <div class="actions">
+                <span class="inject" id="page-inject">
+                  <span class="glow"></span>
+                  <span id="page-btn"><span class="icon"><svg><use href="#i-dl" /></svg></span><span class="label">Download GLB</span></span>
+                </span>
+                <span class="sk ghost-action" style="width: 52px"></span>
+                <span class="sk ghost-action" style="width: 44px"></span>
+                <span class="sk ghost-action" style="width: 40px"></span>
+              </div>
+              <div class="page-rule"></div>
+              <div class="desc-sk"><span class="sk" style="width: 640px"></span><span class="sk" style="width: 560px"></span><span class="sk" style="width: 480px"></span></div>
+              <div class="stats">
+                <div class="stat"><span class="sk" style="width: 56px"></span><span class="sk" style="width: 40px"></span></div>
+                <div class="stat"><span class="sk" style="width: 50px"></span><span class="sk" style="width: 44px"></span></div>
+                <div class="stat"><span class="sk" style="width: 54px"></span><span class="sk" style="width: 22px"></span></div>
+                <div class="stat"><span class="sk" style="width: 60px"></span><span class="sk" style="width: 22px"></span></div>
+              </div>
+              <div class="chips model-chips"><span style="width: 52px"></span><span style="width: 34px"></span><span style="width: 36px"></span><span style="width: 56px"></span><span style="width: 70px"></span></div>
+            </div>
+
+            <!-- ── Clip: card grid (browse / search) ── -->
+            <div class="page" id="p-cards">
+              <div class="grid" id="browse-grid"></div>
+            </div>
+
+            <!-- ── Clip: collection ── -->
+            <div class="page" id="p-collection">
+              <div class="coll-head">
+                <span class="sk" style="width: 64px; height: 8px"></span>
+                <span class="sk title" style="width: 190px"></span>
+                <div class="coll-sk"><span class="sk" style="width: 180px"></span><span class="sk" style="width: 120px"></span></div>
+              </div>
+              <div class="coll-actions">
+                <span class="inject" id="coll-inject">
+                  <span class="glow"></span>
+                  <span class="btn" id="coll-btn"><svg class="fi" viewBox="0 0 46 60"><use href="#f-glb" /></svg><span class="label">Download all 12 models as GLB</span></span>
+                </span>
+                <span class="btn"><svg><use href="#i-code" /></svg><span class="sk" style="width: 68px"></span></span>
+                <span class="btn"><svg><use href="#i-share" /></svg><span class="sk" style="width: 60px"></span></span>
+              </div>
+              <div class="grid" id="coll-grid"></div>
+            </div>
+
+            <!-- svelte-sonner toast, bottom-right of the page -->
+            <div id="toast">
+              <span class="t-close"><svg><use href="#i-x" /></svg></span>
+              <span class="t-icon">
+                <svg id="t-load" style="color: var(--muted)"><use href="#i-pinwheel" /></svg>
+                <svg id="t-ok" style="color: var(--success); opacity: 0"><use href="#i-circle-check" /></svg>
+              </span>
+              <span class="t-body">
+                <span class="t-title"></span>
+                <span class="sk" style="width: 170px; height: 14px; border-radius: 7px; margin-top: 10px"></span>
+              </span>
+            </div>
+          </div>
+
+          <span id="tip">Download GLB</span>
+
+          <div id="cursor">
+            <span id="ring"></span>
+            <div id="ptr">
+              <svg id="cur-arrow" viewBox="0 0 20 28">
+                <path d="M3 2 L3 22.5 L7.9 18 L11.1 25.4 L14.4 24 L11.3 16.8 L17.8 16.8 Z" fill="#14171a" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" />
+              </svg>
+              <svg id="cur-hand" viewBox="0 0 22 24">
+                <path d="M7.5 2.2c1 0 1.8.8 1.8 1.8v6.4l.4-.1V8.6c0-1 .8-1.7 1.7-1.7s1.7.8 1.7 1.7v1.7l.4-.1c0-.9.8-1.6 1.7-1.6s1.7.8 1.7 1.7v1.6l.3-.1c.1-.8.8-1.4 1.6-1.4.9 0 1.6.8 1.6 1.7v5.2c0 3.8-2.8 6.6-6.5 6.6h-1.6c-2.2 0-3.9-.9-5.2-2.7L2.6 15c-.6-.8-.4-1.9.4-2.4.7-.5 1.7-.3 2.3.3l.4.5V4c0-1 .8-1.8 1.8-1.8z" fill="#fff" stroke="#14171a" stroke-width="1.3" stroke-linejoin="round" />
+                <path d="M9.3 16v3.2M12.8 16v3.2M16.2 16v3.2" stroke="#14171a" stroke-width="1.1" stroke-linecap="round" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (() => {
+        const $ = (s) => document.querySelector(s);
+        const $$ = (s) => [...document.querySelectorAll(s)];
+        const vars = window.__hyperframes?.getVariables?.() ?? {};
+        const want = vars.clip ?? new URLSearchParams(location.search).get("clip"); // ?clip= for plain-browser preview
+        const CLIP = ["model", "cards", "collection"].includes(want) ? want : "model";
+        document.documentElement.dataset.clip = CLIP;
+        const DUR = 4;
+        const LOOP_W = (2 * Math.PI) / DUR;
+        const SCALE = 1.5;
+        const CURSOR = 4; // pointer + click ring, drawn 4× so they read at README size
+
+        // ── Easing + interpolation (pure) ──────────────────────────
+        const ease = {
+          out: gsap.parseEase("power3.out"),
+          in: gsap.parseEase("power2.in"),
+          io: gsap.parseEase("power2.inOut"),
+          io3: gsap.parseEase("power3.inOut"),
+          back: gsap.parseEase("back.out(2.2)"),
+        };
+        const clamp01 = (v) => Math.max(0, Math.min(1, v));
+        const prog = (t, a, b) => clamp01((t - a) / (b - a));
+        const lerp = (a, b, p) => a + (b - a) * p;
+        const setText = (node, s) => {
+          if (node.textContent !== s) node.textContent = s;
+        };
+        const shimmerPos = (t) => `${100 - ((t % 1.6) / 1.6) * 200}% 0`;
+
+        // ── Static page content ───────────────────────────────────
+        for (const page of $$(".page")) page.prepend($("#sitenav").content.cloneNode(true));
+
+        // Skeleton name widths per card (fixed: every frame is pure).
+        const NAME_W = [120, 92, 136, 104, 84, 128, 112, 96, 124, 88, 140, 100];
+        const card = ([shape, color], i) => `
+          <div class="cm">
+            <div class="thumb"><svg style="--c:${color}"><use href="#s-${shape}" /></svg><span class="shade"></span>
+              <span class="card-dl"><svg><use href="#i-card-dl" /></svg><span class="spin"></span></span>
+            </div>
+            <div class="info"><span class="sk" style="width:${NAME_W[i % NAME_W.length]}px"></span><span class="spacer"></span>
+              <span class="cm-stats"><svg><use href="#i-eye" /></svg><svg><use href="#i-comment" /></svg><svg><use href="#i-star" /></svg></span>
+            </div>
+          </div>`;
+        const BROWSE = [
+          ["sphere", "#e9256d"],
+          ["cube", "#1caad9"], // the one we download
+          ["cone", "#f5c542"],
+          ["torus", "#1ac95d"],
+          ["cylinder", "#b58cf0"],
+          ["octa", "#5fd4e8"],
+          ["pyramid", "#ff8a3d"],
+          ["capsule", "#e2e5e8"],
+          ["cube", "#e9256d"],
+          ["sphere", "#1ac95d"],
+          ["cylinder", "#ff8a3d"],
+          ["cone", "#5fd4e8"],
+        ];
+        // A collection of cubes, one color each.
+        const CUBES = ["#e2e5e8", "#e9256d", "#1caad9", "#1ac95d", "#f5c542", "#8a949c", "#ff8a3d", "#b58cf0", "#5fd4e8", "#14171a", "#f59ac0", "#7ee0a5"];
+        $("#browse-grid").innerHTML = BROWSE.map(card).join("");
+        $("#coll-grid").innerHTML = CUBES.map((c, i) => card(["cube", c], i)).join("");
+
+        // ── Layout: measured once, untransformed ──────────────────
+        const world = $("#world");
+        world.style.transform = "none";
+        const rectIn = (node) => {
+          const r = node.getBoundingClientRect();
+          const w = world.getBoundingClientRect();
+          const x = r.left - w.left;
+          const y = r.top - w.top;
+          return { x, y, w: r.width, h: r.height, cx: x + r.width / 2, cy: y + r.height / 2 };
+        };
+        const at = (r, dx = 0, dy = 0) => [r.cx + dx, r.cy + dy];
+
+        /** Natural width of an injected button for a given label (incl. trailing margin). */
+        function widthFor(btn, labelNode, text) {
+          const prev = labelNode.textContent;
+          labelNode.textContent = text;
+          const cs = getComputedStyle(btn);
+          const w = btn.offsetWidth + parseFloat(cs.marginRight) + parseFloat(cs.marginLeft);
+          labelNode.textContent = prev;
+          return w;
+        }
+
+        // ── Beats (shared) ────────────────────────────────────────
+        // Loop: UI in → cursor in → click → 0→100% in 1 s → hold → cursor + UI out → idle = frame 0.
+        const T_ENTER = 0.1;
+        const T_CLICK = 1.05;
+        const T_START = T_CLICK + 0.05;
+        const T_DONE = T_START + 1.0;
+        const T_OUT = 3.0;
+        const CLICKS = [T_CLICK];
+
+        // ── Single-model job (model + cards clips) ────────────────
+        function job(t) {
+          if (t < T_START || t >= T_OUT + 0.5) return { phase: "idle", pct: 0 };
+          if (t >= T_DONE) return { phase: "done", pct: 100 };
+          const pct = 100 * ease.io(prog(t, T_START, T_DONE));
+          return { phase: "busy", pct };
+        }
+        // ── Collection batch ──────────────────────────────────────
+        const T_BATCH = T_START;
+        const TOTAL = 12;
+        function batch(t) {
+          if (t < T_START || t >= T_OUT + 0.5) return { state: "idle", finished: 0 };
+          if (t >= T_DONE) return { state: "done", finished: TOTAL };
+          return { state: "running", finished: Math.min(TOTAL - 1, Math.floor(ease.io(prog(t, T_START, T_DONE)) * TOTAL)) };
+        }
+
+        // ── Per-clip layout: click target, cursor rest + park spots ─
+        let L;
+        if (CLIP === "model") {
+          const btn = $("#page-btn");
+          const label = $("#page-btn .label");
+          L = {
+            inject: $("#page-inject"),
+            wIdle: widthFor(btn, label, "Download GLB"),
+            wDone: widthFor(btn, label, "GLB downloaded"),
+            btn: rectIn(btn),
+          };
+          L.target = at(L.btn, 4, 2);
+        } else if (CLIP === "cards") {
+          const cards = $$("#browse-grid .cm");
+          L = { cards, thumbs: cards.map((c) => rectIn(c.querySelector(".thumb"))), dls: cards.map((c) => rectIn(c.querySelector(".card-dl"))) };
+          L.ti = 1; // car_model_textured
+          L.target = at(L.dls[L.ti], 1, 2);
+        } else {
+          const btn = $("#coll-btn");
+          const label = $("#coll-btn .label");
+          const cards = $$("#coll-grid .cm");
+          L = {
+            inject: $("#coll-inject"),
+            wIdle: widthFor(btn, label, "Download all 12 models as GLB"),
+            btn: rectIn(btn),
+            cards,
+            thumbs: cards.map((c) => rectIn(c.querySelector(".thumb"))),
+          };
+          L.target = at(L.btn, 30, 2);
+        }
+        L.rest = [1320, 780]; // just outside the frame, so the loop starts and ends without a cursor
+        L.park = [L.target[0] + 110, L.target[1] + 150]; // off the control, so its progress stays readable
+        world.style.transform = `scale(${SCALE})`;
+
+        // ── Cursor path: each move bends into a soft arc ──────────
+        const MOVES = [
+          // [t0, t1, from, to, bend]
+          [0.25, 0.97, L.rest, L.target, -0.12],
+          [1.25, 1.65, L.target, L.park, 0.1],
+          [2.45, 3.1, L.park, L.rest, 0.12],
+        ];
+        function cursorAt(t) {
+          let pos = L.rest;
+          for (const [t0, t1, a, b, bend] of MOVES) {
+            if (t < t0) break;
+            if (t >= t1) {
+              pos = b;
+              continue;
+            }
+            const p = ease.io3(prog(t, t0, t1));
+            const cx = (a[0] + b[0]) / 2 - (b[1] - a[1]) * bend;
+            const cy = (a[1] + b[1]) / 2 + (b[0] - a[0]) * bend;
+            const u = 1 - p;
+            pos = [u * u * a[0] + 2 * u * p * cx + p * p * b[0], u * u * a[1] + 2 * u * p * cy + p * p * b[1]];
+            break;
+          }
+          const w = LOOP_W;
+          return [pos[0] + 1.2 * Math.sin(w * 3 * t) + 0.6 * Math.sin(w * 7 * t + 1), pos[1] + 0.9 * Math.sin(w * 4 * t + 2)];
+        }
+        const within = (pt, r, pad = 0) => pt[0] >= r.x - pad && pt[0] <= r.x + r.w + pad && pt[1] >= r.y - pad && pt[1] <= r.y + r.h + pad;
+        function pressAmount(t) {
+          let m = 0;
+          for (const tc of CLICKS) {
+            const d = t - tc;
+            if (d > -0.08 && d < 0) m = Math.max(m, ease.out(prog(d, -0.08, 0)));
+            else if (d >= 0 && d < 0.14) m = Math.max(m, 1 - ease.out(prog(d, 0, 0.14)));
+          }
+          return m;
+        }
+        function ringAt(t) {
+          for (const tc of CLICKS) if (t >= tc && t < tc + 0.45) return [prog(t, tc, tc + 0.45), ...cursorAt(tc)];
+          return null;
+        }
+        /** Entry for an injected header button: [width 0..1, content 0..1, glow 0..1] */
+        function entry(t) {
+          const grow = ease.io(prog(t, T_ENTER, T_ENTER + 0.45)) * (1 - ease.io(prog(t, T_OUT + 0.15, T_OUT + 0.6)));
+          const show = ease.out(prog(t, T_ENTER + 0.2, T_ENTER + 0.7)) * (1 - ease.in(prog(t, T_OUT + 0.05, T_OUT + 0.3)));
+          const glow = Math.sin(Math.PI * prog(t, T_ENTER + 0.3, T_ENTER + 1.3)) ** 2;
+          return [grow, show, glow];
+        }
+        function applyEntry(t, inject, content, width) {
+          const [grow, show, glow] = entry(t);
+          inject.style.width = grow >= 1 ? "auto" : `${grow * width}px`;
+          content.style.opacity = show;
+          content.style.transform = `translateY(${(1 - show) * 6}px)`;
+          content.style.filter = show < 1 ? `blur(${(1 - show) * 3}px)` : "";
+          inject.querySelector(".glow").style.opacity = glow;
+        }
+
+        // ── DOM handles ───────────────────────────────────────────
+        const el = {
+          ptr: $("#ptr"), arrow: $("#cur-arrow"), hand: $("#cur-hand"), ring: $("#ring"),
+          toast: $("#toast"), tLoad: $("#t-load"), tOk: $("#t-ok"),
+          tip: $("#tip"),
+          cube: $("#cube"), cubeFloor: $("#cube-floor"),
+          pageBtn: $("#page-btn"), pageLabel: $("#page-btn .label"), pageIcon: $("#page-btn .icon"),
+          pageIconUse: $("#page-btn .icon use"),
+          collBtn: $("#coll-btn"), collLabel: $("#coll-btn .label"), collIcon: $("#coll-btn .fi"),
+        };
+        const cardEls = (L.cards ?? []).map((c) => ({ dl: c.querySelector(".card-dl"), spin: c.querySelector(".spin"), shade: c.querySelector(".shade") }));
+
+        // ── One frame, as a pure function of t ────────────────────
+        function renderAt(t) {
+          const w = LOOP_W;
+          const cp = cursorAt(t);
+          const press = pressAmount(t);
+          let hand = false;
+          let busy = false;
+          let done = false;
+          let tip = null; // [text, x, y]
+
+          if (CLIP === "model" || CLIP === "cards") {
+            const j = job(t);
+            busy = j.phase !== "idle" && j.phase !== "done";
+            done = j.phase === "done";
+            const pct = Math.round(j.pct);
+
+            if (CLIP === "model") {
+              // Slow periodic turn + bob, so frame 4 s meets frame 0.
+              const bob = 3 * Math.sin(w * t);
+              el.cube.style.transform = `translateY(${bob}px) rotateX(-24deg) rotateY(${-38 + 16 * Math.sin(w * t)}deg) rotateZ(${2 * Math.sin(w * t + 1)}deg)`;
+              el.cubeFloor.style.transform = `scale(${1 - 0.03 * Math.sin(w * t)})`;
+              const over = within(cp, L.btn, 3);
+              hand = over;
+              let label = "Download GLB";
+              if (busy) label = `Downloading ${pct}%`;
+              else if (done && !over) label = "GLB downloaded";
+              setText(el.pageLabel, label);
+              el.pageBtn.classList.toggle("sf-dl--progress", busy);
+              el.pageLabel.classList.toggle("shimmer", busy);
+              el.pageBtn.classList.toggle("sf-dl--done", done && !over);
+              // Check before "GLB downloaded"; download arrow when idle / re-download hover.
+              el.pageIcon.style.display = busy ? "none" : "";
+              el.pageIconUse.setAttribute("href", done && !over ? "#i-check" : "#i-dl");
+              el.pageLabel.style.backgroundPosition = shimmerPos(t);
+              applyEntry(t, L.inject, el.pageBtn, t > T_OUT ? L.wDone : L.wIdle);
+              if (over) el.pageBtn.style.opacity = Number(el.pageBtn.style.opacity) * (1 - 0.35 * press);
+            } else {
+              L.cards.forEach((_, i) => {
+                const c = cardEls[i];
+                const overCard = within(cp, L.thumbs[i]);
+                const overDl = within(cp, L.dls[i], 4);
+                const target = i === L.ti;
+                const a = T_ENTER + 0.15 + i * 0.06;
+                const pop = ease.back(prog(t, a, a + 0.4)) * (1 - ease.in(prog(t, T_OUT + i * 0.03, T_OUT + 0.3 + i * 0.03)));
+                const cBusy = target && busy;
+                const cDone = target && done;
+                c.dl.style.opacity = clamp01(pop);
+                c.dl.style.transform = `scale(${0.4 + 0.6 * pop})`;
+                c.dl.classList.toggle("hover", overCard && !cDone);
+                c.dl.classList.toggle("busy", cBusy);
+                c.dl.classList.toggle("done", cDone);
+                c.spin.style.transform = `rotate(${(t * 514) % 360}deg)`;
+                c.shade.style.opacity = overCard ? 1 : 0;
+                if (overDl) {
+                  hand = true;
+                  const r = L.dls[i];
+                  tip = [cBusy ? `Downloading ${pct}%` : cDone ? "GLB downloaded" : "Download GLB", r.cx, r.y - 6];
+                }
+              });
+            }
+          } else {
+            const b = batch(t);
+            busy = b.state === "running";
+            done = b.state === "done";
+            const over = within(cp, L.btn, 3);
+            hand = over;
+            let label = "Download all 12 models as GLB";
+            if (b.state === "running") label = `Downloading ${b.finished} of ${TOTAL}`;
+            setText(el.collLabel, label);
+            applyEntry(t, L.inject, el.collBtn, L.wIdle);
+            el.collIcon.style.opacity = busy ? 0.7 + 0.3 * Math.cos(t * 2 * Math.PI / 1.2) : 1;
+            const cardsOut = 1 - ease.in(prog(t, T_OUT, T_OUT + 0.3));
+            L.cards.forEach((_, i) => {
+              const c = cardEls[i];
+              const cBusy = b.state === "running" && i === b.finished;
+              const cDone = (b.state === "running" || done) && i < b.finished;
+              const since = T_BATCH + ((i + 1) / TOTAL) * (T_DONE - T_BATCH);
+              const pop = cDone ? ease.back(prog(t, since, since + 0.35)) : cBusy ? 1 : 0;
+              c.dl.style.opacity = clamp01(pop) * cardsOut;
+              c.dl.style.transform = `scale(${0.4 + 0.6 * pop})`;
+              c.dl.classList.toggle("busy", cBusy);
+              c.dl.classList.toggle("done", cDone);
+              c.dl.querySelector("use").setAttribute("href", cDone ? "#i-check" : "#i-card-dl");
+              c.spin.style.transform = `rotate(${(t * 514) % 360}deg)`;
+            });
+            if (over) el.collBtn.style.opacity = Number(el.collBtn.style.opacity) * (1 - 0.35 * press);
+          }
+
+          // Cursor
+          el.ptr.style.transform = `translate(${cp[0]}px, ${cp[1]}px) scale(${CURSOR * (1 - 0.14 * press)})`;
+          el.arrow.style.opacity = hand ? 0 : 1;
+          el.hand.style.opacity = hand ? 1 : 0;
+          const r = ringAt(t);
+          el.ring.style.opacity = r ? 0.9 * (1 - r[0]) : 0;
+          if (r) el.ring.style.transform = `translate(${r[1]}px, ${r[2]}px) scale(${CURSOR * (0.4 + 0.9 * ease.out(r[0]))})`;
+
+          // Card tooltip
+          el.tip.style.opacity = tip ? 1 : 0;
+          if (tip) {
+            setText(el.tip, tip[0]);
+            el.tip.style.left = `${tip[1] - el.tip.offsetWidth / 2}px`;
+            el.tip.style.top = `${tip[2] - el.tip.offsetHeight - 8}px`;
+          }
+
+          // Toast (loading → success, sonner slide + fade)
+          const tIn = ease.out(prog(t, T_START, T_START + 0.42));
+          const tOut = ease.in(prog(t, T_OUT, T_OUT + 0.32));
+          el.toast.style.opacity = tIn * (1 - tOut);
+          el.toast.style.transform = `translateY(${(1 - tIn) * 40 + tOut * 24}px)`;
+          el.tLoad.style.opacity = done ? 0 : 1;
+          el.tOk.style.opacity = done ? 1 : 0;
+          el.tLoad.style.transform = `rotate(${(t * 300) % 360}deg)`;
+        }
+
+        gsap.registerPlugin({ name: "clipClock", init() {}, render: (ratio) => renderAt(ratio * DUR) });
+        renderAt(0);
+        const tl = gsap.timeline({ paused: true });
+        tl.to({}, { clipClock: 1, duration: DUR, ease: "none" }, 0);
+        window.__timelines = window.__timelines || {};
+        window.__timelines["main"] = tl;
+        window.__renderAt = renderAt; // preview/debug seeking
+      })();
+    </script>
+  </body>
+</html>

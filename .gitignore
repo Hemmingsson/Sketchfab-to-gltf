@@ -1,0 +1,22 @@
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+*.log
+node_modules/
+*.zip
+.output/
+.wxt/
+playground/dist/
+__pycache__/
+*.pyc
+
+# Local model fixtures the sample-backed tests read (not redistributable).
+.context/
+
+# Demo renders and the agent scratch space stay local.
+demo-video/renders/
+demo-video/snapshots/
+.agents/
+.atelier/
