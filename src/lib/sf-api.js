@@ -43,20 +43,32 @@ export async function fetchBytes(url) {
   return new Uint8Array(await resp.arrayBuffer());
 }
 
+const NAMED_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+/**
+ * The embed page's prefetched JSON. It sits HTML-escaped in a comment, so every
+ * entity is decoded in one pass (`&amp;#39;` stays the literal text `&#39;`);
+ * decoding only `&#34;` left `Davinci&#39;s` in model names.
+ *
+ * @param {string} embedHtml
+ */
+export function parsePrefetched(embedHtml) {
+  const m =
+    embedHtml.match(/id="js-dom-data-prefetched-data"><!--([\s\S]*?)-->/) ||
+    embedHtml.match(/js-dom-data-prefetched-data[^>]*>\s*<!--([\s\S]*?)-->/);
+  if (!m) throw new Error("Could not read public viewer data (private/deleted model?)");
+  const raw = m[1].replace(/&(?:#(\d+)|#x([0-9a-f]+)|(amp|lt|gt|quot|apos));/gi, (all, dec, hex, named) => {
+    if (named) return NAMED_ENTITIES[/** @type {keyof typeof NAMED_ENTITIES} */ (named.toLowerCase())];
+    const code = dec ? Number(dec) : parseInt(hex, 16);
+    return code <= 0x10ffff ? String.fromCodePoint(code) : all;
+  });
+  return JSON.parse(raw);
+}
+
 export async function fetchViewerInfo(uid) {
   const embedUrl = `https://sketchfab.com/models/${uid}/embed`;
   const embedHtml = await fetchText(embedUrl);
-  let m = embedHtml.match(
-    /id="js-dom-data-prefetched-data"><!--([\s\S]*?)-->/
-  );
-  if (!m) {
-    m = embedHtml.match(
-      /js-dom-data-prefetched-data[^>]*>\s*<!--([\s\S]*?)-->/
-    );
-  }
-  if (!m) throw new Error("Could not read public viewer data (private/deleted model?)");
-  const raw = m[1].replace(/&#34;/g, '"');
-  const data = JSON.parse(raw);
+  const data = parsePrefetched(embedHtml);
   let key = `/i/models/${uid}`;
   if (!(key in data)) {
     const alt = Object.keys(data).find((k) => k.startsWith(`/i/models/${uid}`));

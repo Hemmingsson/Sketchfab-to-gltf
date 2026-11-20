@@ -2,6 +2,9 @@ import { defineBackground } from "#imports";
 import { browser, type Browser } from "wxt/browser";
 import { batchFolder } from "../lib/batch.js";
 import { collectionModelUrls } from "../lib/collection.js";
+import { createConverter } from "../lib/converter.js";
+import { sendUntilAcked, withTimeout } from "../lib/handoff.js";
+import { downloadModel } from "../lib/pipeline.js";
 import { modelUid } from "../lib/model-url.js";
 import { isMilestoneStage, stageMilestone } from "../lib/milestones.js";
 import { appendLog, closeOpenGroups, settleLog } from "../lib/progress.js";
@@ -70,6 +73,32 @@ export default defineBackground({
 
     function broadcast(msg: unknown) {
       browser.runtime.sendMessage(msg).catch(() => {});
+    }
+
+    /**
+     * Where the converter runs. Chrome's background is a service worker with no
+     * DOM, so it uses the offscreen document. Orion runs the background as a DOM
+     * page (`self` is a Window) and its offscreen documents never load again
+     * after `closeDocument`, so a background with `document` runs it here.
+     */
+    const pageBackground = typeof document !== "undefined";
+    let localConverter: ReturnType<typeof createConverter> | undefined;
+
+    /** Send a request to the converter, wherever it runs; resolves to its reply. */
+    function toConverter(msg: OffscreenRequest): Promise<unknown> {
+      if (!pageBackground) return browser.runtime.sendMessage(msg);
+      localConverter ??= createConverter({
+        downloadModel,
+        // Async like a runtime message, so handlers never run inside the caller's stack.
+        emit: (event) => queueMicrotask(() => handleOffscreen(event as OffscreenEvent)),
+      });
+      return localConverter.handle(msg);
+    }
+
+    /** Stop a hung converter. A page background cannot kill its own pipeline; the job just fails. */
+    async function closeConverter() {
+      if (pageBackground) return;
+      await browser.offscreen.closeDocument().catch(() => {});
     }
 
     /** Popup and the tabs following this job. */
@@ -194,7 +223,7 @@ export default defineBackground({
     }
 
     async function offscreenAlive() {
-      if (!browser.runtime.getContexts) return true;
+      if (pageBackground || !browser.runtime.getContexts) return true;
       const contexts = await browser.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] });
       return contexts.length > 0;
     }
@@ -213,7 +242,7 @@ export default defineBackground({
       if (!gone && silentMs < STALL_MS) return;
       if (current !== job.uid) return;
       // Close before failing: failJob starts the next job, which must get a fresh document.
-      await browser.offscreen.closeDocument().catch(() => {});
+      await closeConverter();
       // A late "done" may have moved it to saving; that save fails on its own now the blob is gone.
       if (jobs.get(job.uid)?.phase !== "saving") {
         failJob(job, gone ? "Converter closed unexpectedly" : "Converter stopped responding");
@@ -221,6 +250,7 @@ export default defineBackground({
     }
 
     async function ensureOffscreen() {
+      if (pageBackground) return;
       try {
         await browser.offscreen.createDocument({
           url: "offscreen.html",
@@ -268,6 +298,14 @@ export default defineBackground({
       return uid;
     }
 
+    /** A startup line in the job log (Raw tab), pushed live. */
+    function startupStep(job: DownloadJob, text: string) {
+      if (!isLive(job)) return;
+      appendLog(job.log, { kind: "info", text, depth: 1 });
+      mirrorSessionSoon();
+      broadcastJob(job);
+    }
+
     async function runNext() {
       if (current) return;
       const uid = queue.shift();
@@ -287,8 +325,12 @@ export default defineBackground({
       states.get(uid)!.lastEventAt = Date.now();
       startKeepAlive();
       try {
-        const settings = await readSettings();
-        await ensureOffscreen();
+        // Each startup step is logged and timed out, so a browser that stubs or
+        // stalls an API (Orion) shows where it stopped instead of hanging in Queued.
+        const settings = await withTimeout(readSettings(), 5000, "Reading settings");
+        startupStep(job, "Opening converter");
+        await withTimeout(ensureOffscreen(), 10_000, "Opening converter");
+        startupStep(job, "Handing job to converter");
         const msg: OffscreenRequest = {
           target: "offscreen",
           action: "run",
@@ -300,7 +342,9 @@ export default defineBackground({
           includeViewerScene: settings.includeViewerScene,
           uidInFilename: settings.uidInFilename,
         };
-        await browser.runtime.sendMessage(msg);
+        // Resend until the converter acks, so a lost run message fails the job instead of leaving it Queued.
+        await sendUntilAcked(() => toConverter(msg), { attempts: 12 });
+        startupStep(job, "Converter accepted job");
       } catch (e) {
         failJob(job, e instanceof Error ? e.message : String(e));
       }
@@ -412,9 +456,9 @@ export default defineBackground({
       const giveUp = (message?: string) => failJob(job, message || reason || "Download failed");
 
       const msg: OffscreenRequest = { target: "offscreen", action: "refetchBytes", id: job.uid };
-      browser.runtime
-        .sendMessage(msg)
-        .then(async (resp: { ok?: boolean; base64?: string; mime?: string } | undefined) => {
+      toConverter(msg)
+        .then(async (reply: unknown) => {
+          const resp = reply as { ok?: boolean; base64?: string; mime?: string } | undefined;
           if (!resp?.ok || !resp.base64 || !isLive(job) || job.phase !== "saving") {
             giveUp(reason);
             return;
@@ -432,7 +476,7 @@ export default defineBackground({
 
     function revokeOffscreen(id: string) {
       const msg: OffscreenRequest = { target: "offscreen", action: "revoke", id };
-      broadcast(msg);
+      toConverter(msg).catch(() => {});
     }
 
     function finishSave(job: DownloadJob, state: string, bytes: number) {
@@ -631,7 +675,7 @@ export default defineBackground({
           }
         }
         // The old worker's pipeline may still be running; stop it before this worker starts one.
-        if (orphaned && !current) await browser.offscreen.closeDocument().catch(() => {});
+        if (orphaned && !current) await closeConverter();
         mirrorSession();
       } catch {}
     })();
