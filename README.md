@@ -6,7 +6,7 @@
 
 Download any model already rendering in your browser as a `.glb` or `glTF` ZIP.
 
-Sketchfab sent that mesh and those textures so the viewer can preview the model. This writes the same data to disk.
+Sketchfab sent mesh and textures to your browser for viewing. This writes the same data to disk.
 
 </div>
 
@@ -59,8 +59,6 @@ On a collection, click **Download all** in the header actions to queue every mod
 </td>
 </tr>
 </table>
-
-In the popup, **Format** chooses `.glb` (default) or a `glTF` ZIP.
 
 ## How it works
 
