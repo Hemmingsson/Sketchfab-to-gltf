@@ -4,9 +4,8 @@
 
 # Sketchfab → glTF
 
-Download any model already rendering in your browser as a `.glb` or `glTF` ZIP.
-
-Sketchfab sent mesh and textures to your browser for viewing. This writes the same data to disk.
+Download any model Sketchfab renders in your browser as a `.glb` or `glTF` ZIP.
+Sketchfab sends meshes and textures to your browser. This writes the same data to disk.
 
 </div>
 
