@@ -8,6 +8,9 @@ export default defineConfig({
   root: page("."),
   plugins: [svelte({ configFile: false, preprocess: [vitePreprocess()] })],
   build: {
+    // Theatre Studio is a prebundled, dev-only editor. Keep a 1 MB budget for
+    // this playground; the shipped extension retains Vite's default budget.
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       input: { main: page("index.html"), tuner: page("tuner.html") },
     },

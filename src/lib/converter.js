@@ -23,6 +23,7 @@ export function createConverter({ downloadModel, emit }) {
   function revoke(id) {
     const entry = saved.get(id);
     if (!entry) return;
+    clearTimeout(entry.timer);
     URL.revokeObjectURL(entry.url);
     saved.delete(id);
   }
@@ -44,8 +45,9 @@ export function createConverter({ downloadModel, emit }) {
       const type = kind === "glb" ? "model/gltf-binary" : "application/zip";
       const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
       const blobUrl = URL.createObjectURL(new Blob([raw], { type }));
-      saved.set(id, { url: blobUrl, bytes: raw, mime: type });
-      setTimeout(() => revoke(id), 120_000);
+      revoke(id);
+      const timer = setTimeout(() => revoke(id), 120_000);
+      saved.set(id, { url: blobUrl, bytes: raw, mime: type, timer });
       send({ id, kind: "done", blobUrl, filename, bytes: raw.length, meshCount, imageCount });
     } catch (err) {
       send({ id, kind: "error", error: String(err instanceof Error ? err.message : err) });

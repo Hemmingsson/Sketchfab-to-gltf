@@ -1,7 +1,7 @@
 {
   "name": "sketchfab-to-gltf",
   "description": "Download public Sketchfab models as a self-contained .glb with embedded textures.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "license": "GPL-3.0-or-later",
   "author": "Hemmingsson",
@@ -34,9 +34,9 @@
     "@theatre/studio": "0.7.2",
     "@types/node": "^26.6.2",
     "@wxt-dev/module-svelte": "^2.0.5",
-    "svelte-check": "^4.7.6",
+    "svelte-check": "^4.7.8",
     "typescript": "^5.9.3",
-    "vite": "^8.3.1",
+    "vite": "^8.3.8",
     "wxt": "^0.21.4"
   }
 }

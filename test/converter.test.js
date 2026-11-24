@@ -84,3 +84,25 @@ test("messages for other targets are ignored", async () => {
   assert.equal(await conv.handle({ target: "popup", action: "run", id: "d" }), undefined);
   assert.equal(calls(), 0);
 });
+
+test("a new result with the same id gets its own expiry", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { conv, finish } = setup();
+  const result = (value) => ({ filename: "chair.glb", bytes: new Uint8Array([value]), kind: "glb" });
+
+  await conv.handle(run("reused"));
+  finish().resolve(result(1));
+  await tick();
+  t.mock.timers.tick(119_000);
+
+  await conv.handle(run("reused"));
+  finish().resolve(result(2));
+  await tick();
+  t.mock.timers.tick(1_000);
+  const current = await conv.handle({ target: "offscreen", action: "refetchBytes", id: "reused" });
+  assert.equal(current.ok, true);
+  assert.equal(current.base64, "Ag==");
+
+  t.mock.timers.tick(119_000);
+  assert.deepEqual(await conv.handle({ target: "offscreen", action: "refetchBytes", id: "reused" }), { ok: false });
+});
